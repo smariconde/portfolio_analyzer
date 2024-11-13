@@ -125,5 +125,5 @@ def analyze_sector_with_sortino(sector_name):
     plt.show()
 
 # Llamar a la función para analizar el sector financiero, puedes cambiar el nombre del sector aquí
-analyze_sector_with_sortino("Consumer Staples")  # Cambia "Financials" por cualquier otro sector
+analyze_sector_with_sortino("Financials")  # Cambia "Financials" por cualquier otro sector
 
