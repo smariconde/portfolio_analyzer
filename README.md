@@ -7,16 +7,7 @@ El análisis se centra en las acciones del SP500 y en los cedears disponibles en
 La elección entre el **Sharpe ratio**, el **Sortino ratio** o cualquier otro indicador depende del enfoque y objetivos específicos del portfolio que se desea construir, así como de la tolerancia al riesgo y el comportamiento esperado del activo o activos involucrados. Este es un resumen de cada uno:
 
 ### 1. **Sharpe Ratio**
-El **Sharpe ratio** mide el rendimiento ajustado al riesgo, es decir, cuánto rendimiento adicional obtienes por cada unidad de riesgo asumido. Se calcula como:
-
-\[
-\text{Sharpe Ratio} = \frac{R_p - R_f}{\sigma_p}
-\]
-
-Donde:
-- \( R_p \) es el rendimiento del portfolio.
-- \( R_f \) es la tasa libre de riesgo (como los bonos del gobierno).
-- \( \sigma_p \) es la desviación estándar del rendimiento del portfolio (volatilidad).
+El **Sharpe ratio** mide el rendimiento ajustado al riesgo, es decir, cuánto rendimiento adicional obtienes por cada unidad de riesgo asumido.
 
 - > **1.0**: Buen rendimiento ajustado al riesgo. El portafolio está generando un retorno en exceso razonable en comparación con el riesgo.
 - > **2.0**: Muy bueno, indica un portafolio con gran rendimiento en relación con el riesgo asumido.
@@ -36,13 +27,7 @@ Donde:
 ---
 
 ### 2. **Sortino Ratio**
-El **Sortino ratio** es similar al Sharpe ratio, pero tiene una diferencia importante: solo penaliza la volatilidad negativa (pérdidas). Se calcula como:
-
-\[
-\text{Sortino Ratio} = \frac{R_p - R_f}{\sigma_{\text{down}}}
-\]
-
-Donde \( \sigma_{\text{down}} \) es la desviación estándar de los rendimientos negativos (es decir, la volatilidad en el lado de las pérdidas).
+El **Sortino ratio** es similar al Sharpe ratio, pero tiene una diferencia importante: solo penaliza la volatilidad negativa (pérdidas).
 
 **Ventajas**:
 - Penaliza solo la volatilidad negativa, lo que lo hace más adecuado para los inversores que se enfocan en minimizar las pérdidas y no se preocupan por la volatilidad positiva (cuando el valor del portfolio sube).
@@ -57,13 +42,7 @@ Donde \( \sigma_{\text{down}} \) es la desviación estándar de los rendimientos
 ---
 
 ### 3. **Omega Ratio**
-El **Omega ratio** mide la relación entre los rendimientos positivos y negativos de un portfolio, proporcionando una visión más completa del rendimiento ajustado al riesgo. Se calcula como:
-
-\[
-\text{Omega Ratio} = \frac{\int_{0}^{\infty} (1 - F(x))dx}{\int_{-\infty}^{0} F(x)dx}
-\]
-
-Donde \( F(x) \) es la función de distribución acumulada de los rendimientos del portfolio.
+El **Omega ratio** mide la relación entre los rendimientos positivos y negativos de un portfolio, proporcionando una visión más completa del rendimiento ajustado al riesgo.
 
 **Ventajas**:
 - Toma en cuenta toda la distribución de los rendimientos, no solo los rendimientos promedio o la volatilidad.
@@ -78,11 +57,7 @@ Donde \( F(x) \) es la función de distribución acumulada de los rendimientos d
 ---
 
 ### 4. **Calmar Ratio**
-El **Calmar ratio** compara el rendimiento de un activo con el riesgo máximo de caída (drawdown). Se calcula como:
-
-\[
-\text{Calmar Ratio} = \frac{R_p}{\text{Máximo Drawdown}}
-\]
+El **Calmar ratio** compara el rendimiento de un activo con el riesgo máximo de caída (drawdown).
 
 **Ventajas**:
 - Muy útil para evaluar portfolios con una alta exposición al riesgo de pérdidas extremas.
@@ -97,11 +72,7 @@ El **Calmar ratio** compara el rendimiento de un activo con el riesgo máximo de
 ---
 
 ### 5. **Treynor Ratio**
-El **Treynor ratio** mide el rendimiento ajustado al riesgo sistemático (el riesgo no diversificable), considerando solo la beta del portfolio. Se calcula como:
-
-\[
-\text{Treynor Ratio} = \frac{R_p - R_f}{\beta_p}
-\]
+El **Treynor ratio** mide el rendimiento ajustado al riesgo sistemático (el riesgo no diversificable), considerando solo la beta del portfolio.
 
 **Ventajas**:
 - Ideal para portfolios que están bien diversificados, ya que considera el riesgo sistemático.
