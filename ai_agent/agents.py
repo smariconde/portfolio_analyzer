@@ -1,6 +1,6 @@
 from typing import Annotated, Any, Dict, Sequence, TypedDict
 
-import operator, os
+import operator, os, json, re
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -10,8 +10,10 @@ from tools import calculate_bollinger_bands, calculate_macd, calculate_obv, calc
 
 import streamlit as st
 from datetime import datetime, timedelta
-import json
-import re  # Import regex module
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 if "GOOGLE_API_KEY" not in os.environ:
     os.environ["GOOGLE_API_KEY"] = os.environ.get('GOOGLE_API_KEY')
