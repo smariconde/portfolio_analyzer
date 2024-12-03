@@ -65,6 +65,8 @@ def quant_agent(state: AgentState):
     prices = data["prices"]
     prices_df = prices_to_df(prices)
     
+    current_price = prices_df['close'].iloc[-1].item()
+
     # Calculate indicators
     # 1. MACD (Moving Average Convergence Divergence)
     macd_line, signal_line = calculate_macd(prices_df)
@@ -82,26 +84,26 @@ def quant_agent(state: AgentState):
     signals = []
     
     # MACD signal
-    if macd_line.iloc[-2] < signal_line.iloc[-2] and macd_line.iloc[-1] > signal_line.iloc[-1]:
+    if macd_line.iloc[-2].item() < signal_line.iloc[-2].item() and macd_line.iloc[-1].item() > signal_line.iloc[-1].item():
         signals.append('bullish')
-    elif macd_line.iloc[-2] > signal_line.iloc[-2] and macd_line.iloc[-1] < signal_line.iloc[-1]:
+    elif macd_line.iloc[-2].item() > signal_line.iloc[-2].item() and macd_line.iloc[-1].item() < signal_line.iloc[-1].item():
         signals.append('bearish')
     else:
         signals.append('neutral')
     
     # RSI signal
-    if rsi.iloc[-1] < 30:
+    if rsi.iloc[-1].item() < 30:
         signals.append('bullish')
-    elif rsi.iloc[-1] > 70:
+    elif rsi.iloc[-1].item() > 70:
         signals.append('bearish')
     else:
         signals.append('neutral')
     
     # Bollinger Bands signal
-    current_price = prices_df['close'].iloc[-1]
-    if current_price < lower_band.iloc[-1]:
+    current_price = prices_df['close'].iloc[-1].item()
+    if current_price < lower_band.iloc[-1].item():
         signals.append('bullish')
-    elif current_price > upper_band.iloc[-1]:
+    elif current_price > upper_band.iloc[-1].item():
         signals.append('bearish')
     else:
         signals.append('neutral')
@@ -123,7 +125,7 @@ def quant_agent(state: AgentState):
         },
         "RSI": {
             "signal": signals[1],
-            "details": f"RSI is {rsi.iloc[-1]:.2f} ({'oversold' if signals[1] == 'bullish' else 'overbought' if signals[1] == 'bearish' else 'neutral'})"
+            "details": f"RSI is {rsi.iloc[-1].item():.2f} ({'oversold' if signals[1] == 'bullish' else 'overbought' if signals[1] == 'bearish' else 'neutral'})"
         },
         "Bollinger": {
             "signal": signals[2],
@@ -132,6 +134,9 @@ def quant_agent(state: AgentState):
         "OBV": {
             "signal": signals[3],
             "details": f"OBV slope is {obv_slope:.2f} ({signals[3]})"
+        },
+        "Current Price": {
+            "current_price": current_price
         }
     }
     
@@ -158,6 +163,7 @@ def quant_agent(state: AgentState):
             "MACD": reasoning["MACD"],
             "RSI": reasoning["RSI"],
             "Bollinger": reasoning["Bollinger"],
+            "Current Price": reasoning["Current Price"]
             #"OBV": reasoning["OBV"]
         }
     }
@@ -279,7 +285,7 @@ def portfolio_management_agent(state: AgentState):
                 Only include the action, quantity, and reasoning in your output as JSON.  Do not include any JSON markdown.
 
                 Remember, the action must be either buy, sell, or hold.
-                You can only buy if you have available cash.
+                You can only buy if you have available cash. Current price plus quantity must be less tahn cash.
                 You can only sell if you have shares in the portfolio to sell.
                 """
             ),
@@ -312,18 +318,26 @@ def portfolio_management_agent(state: AgentState):
 
 def show_agent_reasoning(output, agent_name):
     print(f"\n{'=' * 10} {agent_name.center(28)} {'=' * 10}")
+    st.markdown(f"\n{'=' * 10} {agent_name.center(28)} {'=' * 10}")
     if isinstance(output, (dict, list)):
         # If output is already a dictionary or list, just pretty print it
         print(json.dumps(output, indent=2))
+        st.json(json.dumps(output, indent=2))
     else:
         try:
             # Parse the string as JSON and pretty print it
+
+            cleaned_output = re.sub(r"\s*```json\s*", '', output).strip()
+            cleaned_output = re.sub(r"\```", '"', cleaned_output)  # Replace single quotes with double quotes
+            cleaned_output = re.sub(r'\s+', ' ', cleaned_output)  # Replace multiple spaces with a single space
+            output_match = re.search(r'(\{.*\})', cleaned_output)
+            st.json(json.loads(output_match.group(1)))
+        except json.JSONDecodeError:
             parsed_output = json.loads(output)
             print(json.dumps(parsed_output, indent=2))
-        except json.JSONDecodeError:
-            # Fallback to original string if not valid JSON
-            print(output)
+            st.markdown(parsed_output)
     print("=" * 48)
+
 
 ##### Run the Hedge Fund #####
 def run_hedge_fund(ticker: str, start_date: str, end_date: str, portfolio: dict, show_reasoning: bool = False):
@@ -370,13 +384,13 @@ if __name__ == "__main__":
     st.title("Hedge Fund Trading System")
 
     # Create input fields for user inputs
-    ticker = st.text_input('Stock Ticker Symbol', 'AAPL')
-    start_date = st.date_input('Start Date', value=datetime.now() - timedelta(days=90))
-    end_date = st.date_input('End Date', value=datetime.now())
-    show_reasoning = st.checkbox('Show Reasoning from Each Agent')
+    ticker = st.sidebar.text_input('Stock Ticker Symbol', 'AAPL')
+    start_date = st.sidebar.date_input('Start Date', value=datetime.now() - timedelta(days=90))
+    end_date = st.sidebar.date_input('End Date', value=datetime.now())
+    show_reasoning = st.sidebar.checkbox('Show Reasoning from Each Agent')
 
     # Button to run the hedge fund
-    if st.button('Run Hedge Fund'):
+    if st.sidebar.button('Run Hedge Fund'):
         # Convert dates to string format for validation
         start_date_str = start_date.strftime('%Y-%m-%d') if start_date else None
         end_date_str = end_date.strftime('%Y-%m-%d') if end_date else None
@@ -421,9 +435,6 @@ if __name__ == "__main__":
             try:
                 json_result = json.loads(json_match.group(1))  # Parse the result
                 st.json(json_result)  # Display the JSON result
-                st.markdown(f"#### Action: {json_result.get('action')}")
-                st.markdown(f"#### Quantity: {json_result.get('quantity')}")
-                st.markdown(f"#### Reasoning: {json_result.get('reasoning')}")
             except json.JSONDecodeError:
                 st.error("The AI agent returned an invalid JSON response.")
         else:
