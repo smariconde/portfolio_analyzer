@@ -1,6 +1,6 @@
 from typing import Annotated, Any, Dict, Sequence, TypedDict
 
-import operator, os
+import operator, os, json, re, time
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -10,8 +10,8 @@ from tools import calculate_bollinger_bands, calculate_macd, calculate_obv, calc
 
 import streamlit as st
 from datetime import datetime, timedelta
-import json
-import re  # Import regex module
+
+
 
 if "GOOGLE_API_KEY" not in os.environ:
     os.environ["GOOGLE_API_KEY"] = os.environ.get('GOOGLE_API_KEY')
@@ -130,7 +130,8 @@ def quant_agent(state: AgentState):
         "OBV": {
             "signal": signals[3],
             "details": f"OBV slope is {obv_slope:.2f} ({signals[3]})"
-        }
+        },
+        "Current Price": current_price
     }
     
     # Determine overall signal
@@ -156,7 +157,8 @@ def quant_agent(state: AgentState):
             "MACD": reasoning["MACD"],
             "RSI": reasoning["RSI"],
             "Bollinger": reasoning["Bollinger"],
-            #"OBV": reasoning["OBV"]
+            "OBV": reasoning["OBV"],
+            "Current price": reasoning["Current Price"]
         }
     }
 
@@ -189,12 +191,13 @@ def risk_management_agent(state: AgentState):
                 "system",
                 """You are a risk management specialist.
                 Your job is to take a look at the trading analysis and
-                evaluate portfolio exposure and recommend position sizing.
+                evaluate portfolio exposure and recommend the percentage position sizing.
                 Provide the following in your output (as a JSON):
-                "max_position_size": <float greater than 0>,
+                "max_position_size": <float between 1 and 100>,
                 "risk_score": <integer between 1 and 10>,
                 "trading_action": <buy | sell | hold>,
                 "reasoning": <concise explanation of the decision>
+                Max position size must be the maximum percentage of the portfolio of this stock.
                 """
             ),
             (
@@ -205,10 +208,11 @@ def risk_management_agent(state: AgentState):
 
                 Here is the current portfolio:
                 Portfolio:
-                Cash: {portfolio_cash}
-                Current Position: {portfolio_stock} shares
+                Cash Available: {portfolio_cash}
+                Current Position: {portfolio_stock} % 
                 
-                Only include the max position size, risk score, trading action, and reasoning in your JSON output.  Do not include any JSON markdown.
+                Only include the max position size, risk score, trading action, and reasoning in your JSON output.
+                Do not include any JSON markdown.
                 """
             ),
         ]
@@ -253,14 +257,16 @@ def portfolio_management_agent(state: AgentState):
                 """You are a portfolio manager making final trading decisions.
                 Your job is to make a trading decision based on the team's analysis.
                 Provide the following in your output as json:
+                - "price": <Current price>
                 - "action": "buy" | "sell" | "hold",
                 - "quantity": <positive integer>
+                - "amount": <(current price * (cash * max_position_size / 100)):.2f>
                 - "reasoning": <concise explanation of the decision>
                 Only buy if you have available cash.
-                The quantity that you buy must be less than or equal to the max position size.
+                The quantity that you buy must be less than or equal to the max position size percentage.
                 Only sell if you have shares in the portfolio to sell.
-                The quantity that you sell must be less than or equal to the current position.
-                Respond in argentinian Spanish."""
+                The quantity that you sell must be less than or equal to the current position size percentage.
+                """
             ),
             (
                 "human",
@@ -271,10 +277,10 @@ def portfolio_management_agent(state: AgentState):
 
                 Here is the current portfolio:
                 Portfolio:
-                Cash: {portfolio_cash}
-                Current Position: {portfolio_stock} shares
+                Cash Available: {portfolio_cash}
+                Current Position: {portfolio_stock} %
 
-                Only include the action, quantity, and reasoning in your output as JSON.  Do not include any JSON markdown.
+                Only include the price, action, quantity, amount and reasoning in your output as JSON.  Do not include any JSON markdown.
 
                 Remember, the action must be either buy, sell, or hold.
                 You can only buy if you have available cash.
@@ -365,64 +371,78 @@ app = workflow.compile()
 
 # Add this at the bottom of the file
 if __name__ == "__main__":
-    st.title("Hedge Fund Trading System")
+    st.title("Portfolio AI Agents Analysis")
 
     # Create input fields for user inputs
-    ticker = st.text_input('Stock Ticker Symbol', 'AAPL')
-    start_date = st.date_input('Start Date', value=datetime.now() - timedelta(days=90))
-    end_date = st.date_input('End Date', value=datetime.now())
-    show_reasoning = st.checkbox('Show Reasoning from Each Agent')
+    portfolio_input = st.text_area('Enter Portfolio (comma-separated ticker:percentage pairs)', 'AAPL:10%,GOOGL:20%,MSFT:70%')
+    cash = st.number_input("Cash available", value=10000)
+    portfolio = {}
+    items = portfolio_input.split(',')
+    for item in items:
+        parts = item.strip().split(':')
+        if len(parts) != 2:
+            st.error(f"Invalid format for '{item}'. Expected 'ticker:percentage'.")
+            continue
+        
+        ticker, percentage = parts
+        try:
+            percentage = float(percentage.strip('%'))
+        except ValueError:
+            st.error(f"Invalid percentage value for '{ticker}'. Please enter a valid number.")
+            continue
+        
+        if not (0 <= percentage <= 100):
+            st.error(f"Percentage for '{ticker}' must be between 0 and 100.")
+            continue
+        portfolio[ticker.strip()] = {"cash": cash, "stock": percentage}
+
+    start_date = st.date_input(f'Start Date', value=datetime.now() - timedelta(days=90))
+    end_date = st.date_input(f'End Date', value=datetime.now())
+    show_reasoning = st.checkbox(f'Show Reasoning from Each Agent')
+
+    # Convert dates to string format for validation
+    start_date_str = start_date.strftime('%Y-%m-%d') if start_date else None
+    end_date_str = end_date.strftime('%Y-%m-%d') if end_date else None
+
+    # Validate dates if provided
+    if start_date_str:
+        try:
+            datetime.strptime(start_date_str, '%Y-%m-%d')
+        except ValueError:
+            st.error(f"Start date must be in YYYY-MM-DD format")
+    
+    if end_date_str:
+        try:
+            datetime.strptime(end_date_str, '%Y-%m-%d')
+        except ValueError:
+            st.error(f"End date must be in YYYY-MM-DD format")
 
     # Button to run the hedge fund
     if st.button('Run Hedge Fund'):
-        # Convert dates to string format for validation
-        start_date_str = start_date.strftime('%Y-%m-%d') if start_date else None
-        end_date_str = end_date.strftime('%Y-%m-%d') if end_date else None
+        for ticker, details in portfolio.items():
+            result = run_hedge_fund(
+                ticker=ticker,
+                start_date=start_date_str,
+                end_date=end_date_str,
+                portfolio=details,
+                show_reasoning=show_reasoning
+            )
 
-        # Validate dates if provided
-        if start_date_str:
-            try:
-                datetime.strptime(start_date_str, '%Y-%m-%d')
-            except ValueError:
-                st.error("Start date must be in YYYY-MM-DD format")
-                st.stop()
-        
-        if end_date_str:
-            try:
-                datetime.strptime(end_date_str, '%Y-%m-%d')
-            except ValueError:
-                st.error("End date must be in YYYY-MM-DD format")
-                st.stop()
+            # Remove occurrences of '''json from the result and clean up
+            cleaned_result = re.sub(r"\s*```json\s*", '', result).strip()
+            cleaned_result = re.sub(r"\```", '"', cleaned_result)  # Replace single quotes with double quotes
+            cleaned_result = re.sub(r'\s+', ' ', cleaned_result)  # Replace multiple spaces with a single space
+            json_match = re.search(r'(\{.*\})', cleaned_result) 
 
-        # Sample portfolio
-        portfolio = {
-            "cash": 50000.0,  # $50,000 initial cash
-            "stock": 0         # No initial stock position
-        }
-        
-        result = run_hedge_fund(
-            ticker=ticker,
-            start_date=start_date_str,
-            end_date=end_date_str,
-            portfolio=portfolio,
-            show_reasoning=show_reasoning
-        )
+            # Check if cleaned_result is not empty and is valid JSON
+            if json_match:
+                try:
+                    st.markdown(f"**[{ticker}](https://finviz.com/quote.ashx?t={ticker}&p=d)**")
+                    json_result = json.loads(json_match.group(1))  # Parse the result
+                    st.json(json_result)  # Display the JSON result
+                except json.JSONDecodeError:
+                    st.error("The AI agent returned an invalid JSON response.")
+            else:
+                st.error("The AI agent returned an empty response.")
 
-        # Remove occurrences of '''json from the result and clean up
-        cleaned_result = re.sub(r"\s*```json\s*", '', result).strip()
-        cleaned_result = re.sub(r"\```", '"', cleaned_result)  # Replace single quotes with double quotes
-        cleaned_result = re.sub(r'\s+', ' ', cleaned_result)  # Replace multiple spaces with a single space
-        json_match = re.search(r'(\{.*\})', cleaned_result) 
-
-        # Check if cleaned_result is not empty and is valid JSON
-        if json_match:
-            try:
-                json_result = json.loads(json_match.group(1))  # Parse the result
-                st.json(json_result)  # Display the JSON result
-                st.markdown(f"#### Action: {json_result.get('action')}")
-                st.markdown(f"#### Quantity: {json_result.get('quantity')}")
-                st.markdown(f"#### Reasoning: {json_result.get('reasoning')}")
-            except json.JSONDecodeError:
-                st.error("The AI agent returned an invalid JSON response.")
-        else:
-            st.error("The AI agent returned an empty response.")
+            time.sleep(8)
