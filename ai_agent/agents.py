@@ -70,7 +70,7 @@ def market_data_agent(state: AgentState):
             "start_date": start_date, 
             "end_date": end_date,
             "financial_metrics": financial_metrics,
-            "marke_news": market_news
+            "market_news": market_news
         }
     }
 
@@ -392,7 +392,7 @@ def portfolio_management_agent(state: AgentState):
     """Makes final trading decisions and generates orders"""
     show_reasoning = state["metadata"]["show_reasoning"]
     portfolio = state["data"]["portfolio"]
-    market_news = state['data']["market_news"]
+    market_news = state["data"]["market_news"]
 
     # Get the quant agent, fundamentals agent, and risk management agent messages
     quant_message = next(msg for msg in state["messages"] if msg.name == "quant_agent")
@@ -406,6 +406,7 @@ def portfolio_management_agent(state: AgentState):
                 "system",
                 """You are a portfolio manager making final trading decisions.
                 Your job is to make a trading decision based on the team's analysis.
+                Add metric values to enrich the analysis.
                 Provide the following in your output as json:
                 - "price": <Current price>
                 - "action": "buy" | "sell" | "hold",
@@ -417,7 +418,7 @@ def portfolio_management_agent(state: AgentState):
                 Only sell if you have shares in the portfolio to sell.
                 The quantity that you sell must be less than or equal to the current position size percentage.
 
-                Add a paragraph with analysis of the news and add link to the relevant ones.
+                Add a paragraph on news of the stock only if are relevants to the company and analysis.
                 """
             ),
             (
