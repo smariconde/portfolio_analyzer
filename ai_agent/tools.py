@@ -135,32 +135,29 @@ def format_metric(metric):
 
 def get_news(
     query: str,
-    end_date: str,
+    days:  int = 20,
     max_results: int = 5,
-) -> Union[Dict, str]:
+):
     """
     Perform a web search using the Tavily API.
 
     This tool accesses real-time web data, news, articles and should be used when up-to-date information from the internet is required.
     """
-    from datetime import datetime
+    exclude_domains = ["sports.yahoo.com", "marca.com"]
 
     client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
-    response = client.search(query, topic="news", max_results=max_results)
+    response = client.search(
+        query, 
+        topic="news", 
+        days=days, 
+        max_results=max_results, 
+        include_answer=True, 
+        exclude_domains=exclude_domains)
+
+    new_response = {
+        "answer": response['answer'],
+        "results": response['results']
+    }
     
-    # Convert end_date string to datetime object
-    end_date_dt = datetime.strptime(end_date, '%Y-%m-%d')
     
-    # Filter results
-    if 'results' in response:
-        filtered_results = []
-        for result in response['results']:
-            if 'published_date' in result:
-                # Parse the published_date
-                pub_date = datetime.strptime(result['published_date'], '%a, %d %b %Y %H:%M:%S %Z')
-                if pub_date.date() <= end_date_dt.date():
-                    filtered_results.append(result)
-        
-        response['results'] = filtered_results
-    
-    return response    
+    return new_response    

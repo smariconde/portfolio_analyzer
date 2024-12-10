@@ -6,7 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
 
-from tools import calculate_bollinger_bands, calculate_macd, calculate_obv, calculate_rsi, get_price_data, prices_to_df, get_financial_metrics, format_metric
+from tools import calculate_bollinger_bands, calculate_macd, calculate_obv, calculate_rsi, get_price_data, prices_to_df, get_financial_metrics, format_metric, get_news
 
 import streamlit as st
 from datetime import datetime, timedelta
@@ -52,9 +52,14 @@ def market_data_agent(state: AgentState):
 
     # Get the historical price data
     prices = get_price_data(data["ticker"], start_date, end_date)
-        # Get the financial metrics
+    # Get the financial metrics
     financial_metrics = get_financial_metrics(
         ticker=data["ticker"]
+    )
+    # Get Market news of the stock
+    market_news = get_news(
+        query=f"Show me ${data['ticker']} finantial, operational and related bussines news.",
+        max_results=5,
     )
 
     return {
@@ -65,6 +70,7 @@ def market_data_agent(state: AgentState):
             "start_date": start_date, 
             "end_date": end_date,
             "financial_metrics": financial_metrics,
+            "marke_news": market_news
         }
     }
 
@@ -386,6 +392,7 @@ def portfolio_management_agent(state: AgentState):
     """Makes final trading decisions and generates orders"""
     show_reasoning = state["metadata"]["show_reasoning"]
     portfolio = state["data"]["portfolio"]
+    market_news = state['data']["market_news"]
 
     # Get the quant agent, fundamentals agent, and risk management agent messages
     quant_message = next(msg for msg in state["messages"] if msg.name == "quant_agent")
@@ -409,6 +416,8 @@ def portfolio_management_agent(state: AgentState):
                 The quantity that you buy must be less than or equal to the max position size percentage.
                 Only sell if you have shares in the portfolio to sell.
                 The quantity that you sell must be less than or equal to the current position size percentage.
+
+                Add a paragraph with analysis of the news and add link to the relevant ones.
                 """
             ),
             (
@@ -424,7 +433,11 @@ def portfolio_management_agent(state: AgentState):
                 Cash Available: {portfolio_cash}
                 Current Position: {portfolio_stock} %
 
-                Only include the price, action, quantity, amount and reasoning in your output as JSON.  Do not include any JSON markdown.
+                News: 
+                Answer: {answer_news}
+                Links: {links}
+
+                Only include the price, action, quantity, amount, reasoning and news in your output as JSON.  Do not include any JSON markdown.
 
                 Remember, the action must be either buy, sell, or hold.
                 You can only buy if you have available cash. Current price plus quantity must be less tahn cash.
@@ -441,7 +454,9 @@ def portfolio_management_agent(state: AgentState):
             "fundamentals_message": fundamentals_message.content, 
             "risk_message": risk_message.content,
             "portfolio_cash": f"{portfolio['cash']:.2f}",
-            "portfolio_stock": portfolio["stock"]
+            "portfolio_stock": portfolio["stock"],
+            "answer_news": market_news["answer"],
+            "links": market_news["results"]
         }
     )
     # Invoke the LLM
