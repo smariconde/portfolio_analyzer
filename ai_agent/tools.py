@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import requests
 import yfinance as yf
+from tavily import TavilyClient
   
 def get_prices(ticker, start_date, end_date):
     """Fetch price data from the API."""
@@ -92,3 +93,74 @@ def calculate_obv(prices_df):
             obv.append(obv[-1])
     prices_df['OBV'] = obv
     return prices_df['OBV']
+
+def get_financial_metrics(ticker):
+    """
+    Fetch financial metrics using yfinance.
+    Returns:
+        A dictionary with financial metrics:
+        return_on_equity, net_margin, operating_margin, revenue_growth, 
+        earnings_growth, book_value_growth, current_ratio, debt_to_equity, 
+        free_cash_flow_per_share, earnings_per_share, price_to_earnings_ratio, 
+        price_to_book_ratio, price_to_sales_ratio.
+    """
+    stock = yf.Ticker(ticker)
+    info = stock.info  # Información financiera general
+    
+    try:
+        financial_metrics = {
+            "return_on_equity": info.get("returnOnEquity"),
+            "net_margin": info.get("netIncomeToCommon") / info.get("totalRevenue") if info.get("totalRevenue") else None,
+            "operating_margin": info.get("operatingMargins"),
+            "revenue_growth": info.get("revenueGrowth"),
+            "earnings_growth": info.get("earningsGrowth"),
+            "current_ratio": info.get("currentRatio"),
+            "debt_to_equity": info.get("debtToEquity"),
+            "free_cash_flow_per_share": info.get("freeCashflow") / info.get("sharesOutstanding") if info.get("sharesOutstanding") else None,
+            "earnings_per_share": info.get("trailingEps"),
+            "price_to_earnings_ratio": info.get("trailingPE"),
+            "price_to_book_ratio": info.get("priceToBook"),
+            "price_to_sales_ratio": info.get("priceToSalesTrailing12Months"),
+        }
+    except KeyError as e:
+        raise ValueError(f"Error fetching data for {ticker}: {e}")
+    
+    return financial_metrics
+
+def format_metric(metric):
+    if metric is None:
+        return "N/A"
+    else:
+        return f"{metric:.2%}"
+
+def get_news(
+    query: str,
+    end_date: str,
+    max_results: int = 5,
+) -> Union[Dict, str]:
+    """
+    Perform a web search using the Tavily API.
+
+    This tool accesses real-time web data, news, articles and should be used when up-to-date information from the internet is required.
+    """
+    from datetime import datetime
+
+    client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
+    response = client.search(query, topic="news", max_results=max_results)
+    
+    # Convert end_date string to datetime object
+    end_date_dt = datetime.strptime(end_date, '%Y-%m-%d')
+    
+    # Filter results
+    if 'results' in response:
+        filtered_results = []
+        for result in response['results']:
+            if 'published_date' in result:
+                # Parse the published_date
+                pub_date = datetime.strptime(result['published_date'], '%a, %d %b %Y %H:%M:%S %Z')
+                if pub_date.date() <= end_date_dt.date():
+                    filtered_results.append(result)
+        
+        response['results'] = filtered_results
+    
+    return response    

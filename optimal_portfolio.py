@@ -75,8 +75,8 @@ def create_optimal_portfolio_with_sortino(tickers, portfolio_size, cash_percenta
     return weights_df, performance, sortino_ratio, sp500_sharpe_ratio, sp500_sortino_ratio
 
 # Configuración del portafolio
-tickers = ["BRK-B", "CAT", "CNA", "MSFT", "AMAT", "LRCX", "LLY","MELI", "VIST", "NVO"]  # Lista de tickers de ejemplo
-portfolio_size = 10000  # Tamaño total del portafolio en USD
+tickers = ["BRK-B", "GOOGL", "MSFT", "LRCX", "LLY","MELI", "VIST", "NU", "COST"]  # Lista de tickers de ejemplo
+portfolio_size = 40000  # Tamaño total del portafolio en USD
 cash_percentage = 0.6   # Porcentaje de efectivo no invertido
 min_weight = 0.05
 max_weight = 0.40
