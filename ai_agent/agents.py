@@ -32,6 +32,7 @@ class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     data: Annotated[Dict[str, Any], merge_dicts]
     metadata: Annotated[Dict[str, Any], merge_dicts]
+    agent_reasoning: Annotated[Dict[str,Any], merge_dicts]
 
 ##### Market Data Agent #####
 def market_data_agent(state: AgentState):
@@ -58,7 +59,7 @@ def market_data_agent(state: AgentState):
     )
     # Get Market news of the stock
     market_news = get_news(
-        query=f"Show me ${data['ticker']} finantial, operational and related bussines news.",
+        query=f"Show me ${data['ticker']} financial, operational and related bussines news.",
         max_results=5,
     )
 
@@ -190,13 +191,15 @@ def quant_agent(state: AgentState):
         name="quant_agent",
     )
 
-    # Print the reasoning if the flag is set
-    if show_reasoning:
-        show_agent_reasoning(message_content, "Quant Agent")
-    
+    reasoning_output = show_agent_reasoning(message_content) if show_reasoning else None
+
     return {
         "messages": state["messages"] + [message],
-        "data": data
+        "data": data,
+        "agent_reasoning": {
+            **state.get("agent_reasoning", {}),
+            "quant_agent": reasoning_output
+            }
     }
 
 ##### Fundamental Agent #####
@@ -265,16 +268,16 @@ def fundamentals_agent(state: AgentState):
     }
     
     # 4. Valuation
-    pe_ratio = metrics["price_to_earnings_ratio"]
-    pb_ratio = metrics["price_to_book_ratio"]
-    ps_ratio = metrics["price_to_sales_ratio"]
+    pe_ratio = metrics["price_to_earnings_ratio"] or 0
+    pb_ratio = metrics["price_to_book_ratio"] or 0
+    ps_ratio = metrics["price_to_sales_ratio"] or 0
     
     valuation_score = 0
-    if pe_ratio < 25:  # Reasonable P/E ratio
+    if pe_ratio is not None and pe_ratio < 25:  # Reasonable P/E ratio
         valuation_score += 1
-    if pb_ratio < 3:  # Reasonable P/B ratio
+    if pb_ratio is not None and pb_ratio < 3:  # Reasonable P/B ratio
         valuation_score += 1
-    if ps_ratio < 5:  # Reasonable P/S ratio
+    if ps_ratio is not None and ps_ratio < 5:  # Reasonable P/S ratio
         valuation_score += 1
         
     signals.append('bullish' if valuation_score >= 2 else 'bearish' if valuation_score == 0 else 'neutral')
@@ -310,13 +313,15 @@ def fundamentals_agent(state: AgentState):
         name="fundamentals_agent",
     )
     
-    # Print the reasoning if the flag is set
-    if show_reasoning:
-        show_agent_reasoning(message_content, "Fundamental Analysis Agent")
-    
+    reasoning_output = show_agent_reasoning(message_content) if show_reasoning else None
+        
     return {
-        "messages": [message],
+        "messages": state["messages"] + [message],
         "data": data,
+        "agent_reasoning": {
+            **state.get("agent_reasoning", {}),
+            "fundamentals_agent": reasoning_output
+            }
     }
 
 ##### Risk Management Agent #####
@@ -347,6 +352,7 @@ def risk_management_agent(state: AgentState):
             (
                 "human",
                 """Based on the trading analysis below, provide your risk assessment.
+                For fundamental analysis take in account common industry valuations and metrics. 
 
                 Quant Analysis Trading Signal: {quant_message}
                 Fundamental Analysis Trading Signal: {fundamentals_message}
@@ -380,11 +386,13 @@ def risk_management_agent(state: AgentState):
         name="risk_management_agent",
     )
 
-    # Print the decision if the flag is set
-    if show_reasoning:
-        show_agent_reasoning(message.content, "Risk Management Agent")
+    reasoning_output = show_agent_reasoning(message.content) if show_reasoning else None
 
-    return {"messages": state["messages"] + [message]}
+    return {"messages": state["messages"] + [message],
+            "agent_reasoning": {
+            **state.get("agent_reasoning", {}),
+            "risk_management_agent": reasoning_output
+            }}
 
 
 ##### Portfolio Management Agent #####
@@ -393,6 +401,7 @@ def portfolio_management_agent(state: AgentState):
     show_reasoning = state["metadata"]["show_reasoning"]
     portfolio = state["data"]["portfolio"]
     market_news = state["data"]["market_news"]
+    logo_url = state["data"]["financial_metrics"]["logo_url"]
 
     # Get the quant agent, fundamentals agent, and risk management agent messages
     quant_message = next(msg for msg in state["messages"] if msg.name == "quant_agent")
@@ -409,16 +418,17 @@ def portfolio_management_agent(state: AgentState):
                 Add metric values to enrich the analysis.
                 Provide the following in your output as json:
                 - "price": <Current price>
-                - "action": "buy" | "sell" | "hold",
-                - "quantity": <positive integer>
-                - "amount": <(current price * (cash * max_position_size / 100)):.2f>
+                - "action": <"buy" | "sell" | "hold">
+                - "amount": <(porfolio_cash * max_position_size / 100):.2f>
+                - "quantity": <(amount / price)>
                 - "reasoning": <concise explanation of the decision>
                 Only buy if you have available cash.
                 The quantity that you buy must be less than or equal to the max position size percentage.
                 Only sell if you have shares in the portfolio to sell.
                 The quantity that you sell must be less than or equal to the current position size percentage.
 
-                Add a paragraph on news of the stock only if are relevants to the company and analysis.
+                Add a paragraph on news of the stock only if are relevants to the company. 
+                Don't use news for decition making. It's only for context.
                 """
             ),
             (
@@ -441,8 +451,9 @@ def portfolio_management_agent(state: AgentState):
                 Only include the price, action, quantity, amount, reasoning and news in your output as JSON.  Do not include any JSON markdown.
 
                 Remember, the action must be either buy, sell, or hold.
-                You can only buy if you have available cash. Current price plus quantity must be less tahn cash.
-                You can only sell if you have shares in the portfolio to sell.
+                You can only buy if you have available cash. Current price plus quantity must be less than cash.
+                You can only sell if you have shares in the portfolio to sell. Sell if the gains are at risk.
+
                 """
             ),
         ]
@@ -469,33 +480,63 @@ def portfolio_management_agent(state: AgentState):
         name="portfolio_management",
     )
 
-    # Print the decision if the flag is set
-    if show_reasoning:
-        show_agent_reasoning(message.content, "Portfolio Management Agent")
+    reasoning_output = show_agent_reasoning(message.content) if show_reasoning else None
 
-    return {"messages": state["messages"] + [message]}
+    return {"messages": state["messages"] + [message],
+            "metadata": {
+                "logo_url": logo_url
+                },
+            "agent_reasoning": {
+            **state.get("agent_reasoning", {}),
+            "portfolio_management": reasoning_output
+            }
+            }
 
-def show_agent_reasoning(output, agent_name):
-    print(f"\n{'=' * 10} {agent_name.center(28)} {'=' * 10}")
-    st.markdown(f"\n{'=' * 10} {agent_name.center(28)} {'=' * 10}")
-    if isinstance(output, (dict, list)):
-        # If output is already a dictionary or list, just pretty print it
-        print(json.dumps(output, indent=2))
-        st.json(json.dumps(output, indent=2))
-    else:
-        try:
-            # Parse the string as JSON and pretty print it
+def show_agent_reasoning(output):
+    """
+    Formatea el razonamiento de un agente en JSON.
+    
+    Args:
+        output: La salida del agente (puede ser un diccionario, lista, cadena JSON, o cadena de texto)
+        agent_name: Nombre del agente para mostrar en el encabezado
+    """
 
-            cleaned_output = re.sub(r"\s*```json\s*", '', output).strip()
-            cleaned_output = re.sub(r"\```", '"', cleaned_output)  # Replace single quotes with double quotes
-            cleaned_output = re.sub(r'\s+', ' ', cleaned_output)  # Replace multiple spaces with a single space
-            output_match = re.search(r'(\{.*\})', cleaned_output)
-            st.json(json.loads(output_match.group(1)))
-        except json.JSONDecodeError:
-            parsed_output = json.loads(output)
-            print(json.dumps(parsed_output, indent=2))
-            st.markdown(parsed_output)
-    print("=" * 48)
+    
+    def parse_output_to_json(output):
+        # Si ya es un diccionario o lista, devolverlo tal cual
+        if isinstance(output, (dict, list)):
+            return output
+        
+        # Si es una cadena, intentar parsearla de múltiples formas
+        if isinstance(output, str):
+            # Limpiar la cadena de posibles marcadores de código
+            cleaned_output = re.sub(r"```(json)?", '', output).strip()
+            
+            try:
+                # Intentar parsear directamente
+                return json.loads(cleaned_output)
+            except json.JSONDecodeError:
+                # Si falla, intentar extraer un JSON entre llaves
+                try:
+                    match = re.search(r'(\{.*\})', cleaned_output, re.DOTALL)
+                    if match:
+                        return json.loads(match.group(1))
+                except:
+                    pass
+        
+        # Si no se puede convertir a JSON, convertir a diccionario simple
+        return {"raw_output": str(output)}
+
+    try:
+        # Convertir la salida a un formato JSON que Streamlit pueda mostrar
+        json_output = parse_output_to_json(output)
+        
+        # Mostrar el JSON en Streamlit
+        return json_output
+    
+    except Exception as e:
+        # Manejar cualquier error de conversión
+        return {"error": str(e), "original_output": str(output)}
 
 
 ##### Run the Hedge Fund #####
@@ -518,7 +559,7 @@ def run_hedge_fund(ticker: str, start_date: str, end_date: str, portfolio: dict,
             }
         },
     )
-    return final_state["messages"][-1].content
+    return final_state["messages"][-1].content, final_state["metadata"]["logo_url"], final_state["agent_reasoning"]
 
 # Define the new workflow
 workflow = StateGraph(AgentState)
@@ -546,27 +587,65 @@ if __name__ == "__main__":
     st.title("Portfolio AI Agents Analysis")
 
     # Create input fields for user inputs
-    portfolio_input = st.text_area('Enter Portfolio (comma-separated ticker:percentage pairs)', 'AAPL:10%,GOOGL:20%,MSFT:70%')
+    if 'portfolio' not in st.session_state:
+        st.session_state.portfolio = {}
+    
+    left, middle, right = st.columns([4, 4, 2], gap="large", vertical_alignment="center")
+
+    with left:
+        ticker_input = st.text_input("Enter Ticker", max_chars=5)
+    with middle:
+        percentage_input = st.slider("Enter Percentage", 0.0, 100.0, 100.0, 1.0)
+    with right:
+        add_button = st.button("Add Ticker")
+
+        # Handle adding ticker
+    if add_button:
+        if ticker_input:
+            # Validate ticker (you can add more robust validation)
+            if len(ticker_input) > 0:
+                st.session_state.portfolio[ticker_input] = percentage_input
+                
+                # Clear the input fields
+                st.session_state["ticker_input"] = ""
+                st.session_state["percentage_input"] = 100.0
+                
+                st.rerun()
+        else:
+            st.warning("Please enter both ticker and percentage")
+
+    # Display current portfolio in a more visual way
+    if st.session_state.portfolio:
+        st.subheader("Current Portfolio")
+        
+        # Create a table to display the portfolio
+        portfolio_data = []
+        total_percentage = 0
+        
+        for ticker, percentage in st.session_state.portfolio.items():
+            portfolio_data.append({
+                "Ticker": ticker,
+                "Percentage": f"{percentage:.2f}%"
+            })
+            total_percentage += percentage
+        
+        # Display the portfolio as a table
+        st.table(portfolio_data)
+        
+        # Add a total percentage check
+        st.write(f"Total Portfolio Percentage: {total_percentage:.2f}%")
+        
+        # Optional: Add a warning if total percentage exceeds 100%
+        if total_percentage > 100:
+            st.warning("Warning: Total portfolio percentage exceeds 100%")
+    else:
+        st.write("No tickers added yet")
+    
     cash = st.number_input("Cash available", value=10000)
-    portfolio = {}
-    items = portfolio_input.split(',')
-    for item in items:
-        parts = item.strip().split(':')
-        if len(parts) != 2:
-            st.error(f"Invalid format for '{item}'. Expected 'ticker:percentage'.")
-            continue
-        
-        ticker, percentage = parts
-        try:
-            percentage = float(percentage.strip('%'))
-        except ValueError:
-            st.error(f"Invalid percentage value for '{ticker}'. Please enter a valid number.")
-            continue
-        
-        if not (0 <= percentage <= 100):
-            st.error(f"Percentage for '{ticker}' must be between 0 and 100.")
-            continue
-        portfolio[ticker.strip()] = {"cash": cash, "stock": percentage}
+    
+    st.session_state.portfolio_details = {}
+    for ticker, value in st.session_state.portfolio.items():
+        st.session_state.portfolio_details[ticker] = {"cash": cash, "stock": value}
 
     start_date = st.date_input(f'Start Date', value=datetime.now() - timedelta(days=90))
     end_date = st.date_input(f'End Date', value=datetime.now())
@@ -588,11 +667,11 @@ if __name__ == "__main__":
             datetime.strptime(end_date_str, '%Y-%m-%d')
         except ValueError:
             st.error(f"End date must be in YYYY-MM-DD format")
-
+    
     # Button to run the hedge fund
-    if st.button('Run Hedge Fund'):
-        for ticker, details in portfolio.items():
-            result = run_hedge_fund(
+    if st.button('Run Hedge Fund'):            
+        for ticker, details in st.session_state.portfolio_details.items():
+            result, logo_url, agent_reasoning = run_hedge_fund(
                 ticker=ticker,
                 start_date=start_date_str,
                 end_date=end_date_str,
@@ -609,9 +688,20 @@ if __name__ == "__main__":
             # Check if cleaned_result is not empty and is valid JSON
             if json_match:
                 try:
-                    st.markdown(f"**[{ticker}](https://finviz.com/quote.ashx?t={ticker}&p=d)**")
+                    col1, col2 = st.columns([1, 9], gap="small", vertical_alignment="center")
+                    with col1:
+                        st.image(logo_url, width=100)
+                    with col2:
+                        st.markdown(f"**[{ticker}](https://finviz.com/quote.ashx?t={ticker}&p=d)**")
                     json_result = json.loads(json_match.group(1))  # Parse the result
                     st.json(json_result)  # Display the JSON result
+                    
+                    if show_reasoning:
+                      st.subheader("Agent Reasonings")
+                      for agent, reasoning in agent_reasoning.items():
+                            st.markdown(f"\n#### {agent.replace('_', ' ').title().center(28)}")
+                            st.json(reasoning)
+
                 except json.JSONDecodeError:
                     st.error("The AI agent returned an invalid JSON response.")
             else:

@@ -115,12 +115,13 @@ def get_financial_metrics(ticker):
             "revenue_growth": info.get("revenueGrowth"),
             "earnings_growth": info.get("earningsGrowth"),
             "current_ratio": info.get("currentRatio"),
-            "debt_to_equity": info.get("debtToEquity"),
+            "debt_to_equity": info.get("debtToEquity") / 100 if info.get("debtToEquity") else None,
             "free_cash_flow_per_share": info.get("freeCashflow") / info.get("sharesOutstanding") if (info.get("sharesOutstanding") and info.get("freeCashFlow")) else None,
             "earnings_per_share": info.get("trailingEps"),
             "price_to_earnings_ratio": info.get("trailingPE"),
             "price_to_book_ratio": info.get("priceToBook"),
             "price_to_sales_ratio": info.get("priceToSalesTrailing12Months"),
+            "logo_url": f"https://logo.clearbit.com/{info.get('website', '').replace('http://', '').replace('https://', '').split('/')[0]}"
         }
     except KeyError as e:
         raise ValueError(f"Error fetching data for {ticker}: {e}")
