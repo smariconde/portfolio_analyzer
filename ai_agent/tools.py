@@ -121,6 +121,13 @@ def get_financial_metrics(ticker):
             "price_to_earnings_ratio": info.get("trailingPE"),
             "price_to_book_ratio": info.get("priceToBook"),
             "price_to_sales_ratio": info.get("priceToSalesTrailing12Months"),
+            "totalRevenue": info.get("totalRevenue"),
+            "sharesOutstanding": info.get("sharesOutstanding"),
+            "currentPrice": info.get("currentPrice"),
+            "profitMargins": info.get("profitMargins"),
+            "industry": info.get("industry"),
+            "sector": info.get("sector"),
+            "targetMeanPrice": info.get("targetMeanPrice"),
             "logo_url": f"https://logo.clearbit.com/{info.get('website', '').replace('http://', '').replace('https://', '').split('/')[0]}"
         }
     except KeyError as e:

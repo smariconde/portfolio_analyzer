@@ -669,7 +669,7 @@ if __name__ == "__main__":
             st.error(f"End date must be in YYYY-MM-DD format")
     
     # Button to run the hedge fund
-    if st.button('Run Hedge Fund'):            
+    if st.button('Run Hedge Fund', type="secondary"):            
         for ticker, details in st.session_state.portfolio_details.items():
             result, logo_url, agent_reasoning = run_hedge_fund(
                 ticker=ticker,
