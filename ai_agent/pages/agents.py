@@ -584,6 +584,7 @@ app = workflow.compile()
 
 # Add this at the bottom of the file
 if __name__ == "__main__":
+    st.set_page_config(page_title="Portfolio AI Agents Analysis", page_icon=":material/finance_mode:")
     st.title("Portfolio AI Agents Analysis")
 
     # Create input fields for user inputs
