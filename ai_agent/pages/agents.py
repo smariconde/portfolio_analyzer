@@ -17,7 +17,7 @@ if "GOOGLE_API_KEY" not in os.environ:
     os.environ["GOOGLE_API_KEY"] = os.environ.get('GOOGLE_API_KEY')
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash-002",
+    model="gemini-2.0-flash-exp",
     temperature=0,
     max_tokens=None,
     max_retries=6,
