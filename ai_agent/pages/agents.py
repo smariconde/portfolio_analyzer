@@ -6,7 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
 
-from tools import calculate_bollinger_bands, calculate_macd, calculate_obv, calculate_rsi, get_price_data, prices_to_df, get_financial_metrics, format_metric, get_news
+from tools import calculate_bollinger_bands, calculate_macd, calculate_obv, calculate_rsi, get_price_data, prices_to_df, get_financial_metrics, format_metric, get_news, calculate_trend_signals, calculate_mean_reversion_signals, calculate_momentum_signals, calculate_volatility_signals, calculate_stat_arb_signals, weighted_signal_combination, normalize_pandas
 
 import streamlit as st
 from datetime import datetime, timedelta
@@ -185,13 +185,80 @@ def quant_agent(state: AgentState):
         }
     }
 
+    # 1. Trend Following Strategy
+    trend_signals = calculate_trend_signals(prices_df)
+
+    # 2. Mean Reversion Strategy
+    mean_reversion_signals = calculate_mean_reversion_signals(prices_df)
+
+    # 3. Momentum Strategy
+    momentum_signals = calculate_momentum_signals(prices_df)
+
+    # 4. Volatility Strategy
+    volatility_signals = calculate_volatility_signals(prices_df)
+
+    # 5. Statistical Arbitrage Signals
+    stat_arb_signals = calculate_stat_arb_signals(prices_df)
+
+    # Combine all signals using a weighted ensemble approach
+    strategy_weights = {
+        'trend': 0.25,
+        'mean_reversion': 0.20,
+        'momentum': 0.25,
+        'volatility': 0.15,
+        'stat_arb': 0.15
+    }
+
+    combined_signal = weighted_signal_combination({
+        'trend': trend_signals,
+        'mean_reversion': mean_reversion_signals,
+        'momentum': momentum_signals,
+        'volatility': volatility_signals,
+        'stat_arb': stat_arb_signals
+    }, strategy_weights)
+
+    # Generate detailed analysis report
+    analysis_report = {
+        "signal": combined_signal['signal'],
+        "confidence": f"{round(combined_signal['confidence'] * 100)}%",
+        "strategy_signals": {
+            "trend_following": {
+                "signal": trend_signals['signal'],
+                "confidence": f"{round(trend_signals['confidence'] * 100)}%",
+                "metrics": normalize_pandas(trend_signals['metrics'])
+            },
+            "mean_reversion": {
+                "signal": mean_reversion_signals['signal'],
+                "confidence": f"{round(mean_reversion_signals['confidence'] * 100)}%",
+                "metrics": normalize_pandas(mean_reversion_signals['metrics'])
+            },
+            "momentum": {
+                "signal": momentum_signals['signal'],
+                "confidence": f"{round(momentum_signals['confidence'] * 100)}%",
+                "metrics": normalize_pandas(momentum_signals['metrics'])
+            },
+            "volatility": {
+                "signal": volatility_signals['signal'],
+                "confidence": f"{round(volatility_signals['confidence'] * 100)}%",
+                "metrics": normalize_pandas(volatility_signals['metrics'])
+            },
+            "statistical_arbitrage": {
+                "signal": stat_arb_signals['signal'],
+                "confidence": f"{round(stat_arb_signals['confidence'] * 100)}%",
+                "metrics": normalize_pandas(stat_arb_signals['metrics'])
+            }
+        },
+        "Current Price": current_price
+
+    }
+
     # Create the quant message
     message = HumanMessage(
-        content=str(message_content),  # Convert dict to string for message content
+        content=str(analysis_report),  # Convert dict to string for message content
         name="quant_agent",
     )
 
-    reasoning_output = show_agent_reasoning(message_content) if show_reasoning else None
+    reasoning_output = show_agent_reasoning(analysis_report) if show_reasoning else None
 
     return {
         "messages": state["messages"] + [message],
@@ -303,7 +370,7 @@ def fundamentals_agent(state: AgentState):
     
     message_content = {
         "signal": overall_signal,
-        "confidence": round(confidence, 2),
+        "confidence": f"{round(confidence * 100)}%",
         "reasoning": reasoning
     }
     
@@ -414,21 +481,48 @@ def portfolio_management_agent(state: AgentState):
             (
                 "system",
                 """You are a portfolio manager making final trading decisions.
-                Your job is to make a trading decision based on the team's analysis.
+                Your job is to make a trading decision based on the team's analysis while strictly adhering
+                to risk management constraints.
                 Add metric values to enrich the analysis.
+
+                RISK MANAGEMENT CONSTRAINTS:
+                - You MUST NOT exceed the max_position_size specified by the risk manager
+                - You MUST follow the trading_action (buy/sell/hold) recommended by risk management
+                - These are hard constraints that cannot be overridden by other signals
+
+                When weighing the different signals for direction and timing:
+                1. Fundamental Analysis (60% weight)
+                   - Business quality and growth assessment
+                   - Determines conviction in long-term potential
+                
+                2. Quant Analysis (40% weight)
+                   - Secondary confirmation
+                   - Helps with entry/exit timing
+                
+                The decision process should be:
+                1. First check risk management constraints
+                2. Then evaluate fundamentals signal
+                3. Use quant analysis for timing
+                4. Make the final decision based on the combined signals
+
                 Provide the following in your output as json:
-                - "price": <Current price>
+                - "price": <(Current Price):.2f>
                 - "action": <"buy" | "sell" | "hold">
+                - "confidence": <percentage between 0 and 100>
                 - "amount": <(porfolio_cash * max_position_size / 100):.2f>
                 - "quantity": <(amount / price)>
-                - "reasoning": <concise explanation of the decision>
-                Only buy if you have available cash.
-                The quantity that you buy must be less than or equal to the max position size percentage.
-                Only sell if you have shares in the portfolio to sell.
-                The quantity that you sell must be less than or equal to the current position size percentage.
+                - "agent_signals": <list of agent signals including agent name, signal (bullish | bearish | neutral), and their confidence>
+                - "reasoning": <concise explanation of the decision including how you weighted the signals>
+                
+                Trading Rules:
+                - Never exceed risk management position limits
+                - Only buy if you have available cash
+                - Only sell if you have shares to sell
+                - Quantity must be ≤ current position for sells
+                - Quantity must be ≤ max_position_size from risk management
 
                 Add a paragraph on news of the stock only if are relevants to the company. 
-                Don't use news for decition making. It's only for context.
+                Don't use news for decision making. It's only for context.
                 """
             ),
             (
@@ -648,7 +742,7 @@ if __name__ == "__main__":
     for ticker, value in st.session_state.portfolio.items():
         st.session_state.portfolio_details[ticker] = {"cash": cash, "stock": value}
 
-    start_date = st.date_input(f'Start Date', value=datetime.now() - timedelta(days=90))
+    start_date = st.date_input(f'Start Date', value=datetime.now() - timedelta(days=252))
     end_date = st.date_input(f'End Date', value=datetime.now())
     show_reasoning = st.checkbox(f'Show Reasoning from Each Agent')
 
