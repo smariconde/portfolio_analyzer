@@ -201,9 +201,6 @@ def calculate_trend_signals(prices_df):
     # Calculate ADX for trend strength
     adx = calculate_adx(prices_df, 14)
 
-    # Calculate Ichimoku Cloud
-    ichimoku = calculate_ichimoku(prices_df)
-
     # Determine trend direction and strength
     short_trend = ema_8 > ema_21
     medium_trend = ema_21 > ema_55

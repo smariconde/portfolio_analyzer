@@ -6,7 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
 
-from tools import calculate_bollinger_bands, calculate_macd, calculate_obv, calculate_rsi, get_price_data, prices_to_df, get_financial_metrics, format_metric, get_news, calculate_trend_signals, calculate_mean_reversion_signals, calculate_momentum_signals, calculate_volatility_signals, calculate_stat_arb_signals, weighted_signal_combination, normalize_pandas
+from tools import calculate_bollinger_bands, calculate_macd, calculate_obv, calculate_rsi, get_price_data, prices_to_df, get_financial_metrics, format_metric, get_news, calculate_trend_signals, calculate_mean_reversion_signals, calculate_momentum_signals, calculate_volatility_signals, calculate_stat_arb_signals, weighted_signal_combination, normalize_pandas, parse_output_to_json
 
 import streamlit as st
 from datetime import datetime, timedelta
@@ -391,14 +391,181 @@ def fundamentals_agent(state: AgentState):
             }
     }
 
+##### Valuation Agent #####
+
+def valuation_agent(state: AgentState):
+    """Performs detailed valuation analysis using multiple methodologies."""
+    data = state["data"]
+
+    # Fetch the financial metrics
+    metrics = get_financial_metrics(
+        ticker=data["ticker"]
+    )
+
+    # 1. Get necessary data from metrics
+    ltm_revenue = metrics.get("totalRevenue") or 0
+    shares_outstanding = metrics.get("sharesOutstanding") or 0
+    current_price = metrics.get("currentPrice") or 0
+    trailing_pe = metrics.get("price_to_earnings_ratio") or 0
+    revenue_growth = metrics.get("revenue_growth") or 0
+    earnings_growth = metrics.get("earnings_growth") or 0
+    current_profit_margin = metrics.get("profitMargins") or 0
+    industry = metrics.get("industry", "Not Found")
+    sector = metrics.get("sector", "Not Found")
+
+    # Get year
+    current_year = datetime.now().year
+    target_year = current_year + 5
+
+    # 2. Estimate/Project Missing Metrics and Choose Valuation Method
+    template = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                f"""You are an expert financial analyst. Your job is to analyze a company's
+                    metrics, maturity, size, industry consensus, and risk to estimate the
+                    following for a 5-year DCF model:
+                    "revenue_cagr": <float>,
+                    "profit_margin_{target_year}": <float>,
+                    "shares_reduction_per_year": <float>,
+                    "discount_rate": <float from 0.1 to 0.15> (Depending on the risk. For example, companies from less trusty countries, higher rate),
+                    "terminal_growth_rate": <float>,
+                    "valuation_method": <"PE_multiple" | "Gordon_Growth"> (Choose the best valuation method
+                    based on the company. Use "PE_multiple" for mature companies with stable profitability
+                     and "Gordon_Growth" for high-growth companies where profits are expected to grow into the future,
+                    and do not use "PE_multiple" if there is no data for P/E)
+                     Give me the JSON output only.
+                """,
+            ),
+            (
+                "human",
+                f"""Based on the company below, provide the data for the valuation model.
+                    Company: {ticker}
+                    Industry: {industry}
+                    Sector: {sector}
+    
+                    LTM Revenue: {ltm_revenue}
+                    Shares Outstanding: {shares_outstanding}
+                    Trailing P/E Ratio: {trailing_pe}
+                    Revenue Growth: {revenue_growth}
+                    Earnings Growth: {earnings_growth}
+                    Current Profit Margin: {current_profit_margin}
+
+                   Only include the revenue_cagr, profit_margin_{target_year}, shares_reduction_per_year, discount_rate, terminal_growth_rate and valuation_method in your JSON output.
+                   Do not include any JSON markdown.
+                """,
+            ),
+        ]
+    )
+
+    prompt = template.invoke(
+        {
+            "ticker": ticker,
+            "industry": industry,
+            "sector": sector,
+            "ltm_revenue": ltm_revenue,
+            "shares_outstanding": shares_outstanding,
+            "trailing_pe": trailing_pe,
+            "revenue_growth": revenue_growth,
+            "earnings_growth": earnings_growth,
+            "current_profit_margin": current_profit_margin,
+            "target_year": target_year,
+        }
+    )
+
+    result = llm.invoke(prompt)
+    try:
+        estimation = parse_output_to_json(result.content)
+    except json.JSONDecodeError as e:
+        estimation = {"error": f"JSON Decode Error {e}", "result": result.content}
+
+    revenue_cagr = estimation.get("revenue_cagr", 0.05)
+    profit_margin_target_year = estimation.get(f"profit_margin_{target_year}", 0.15)
+    shares_reduction_per_year = estimation.get("shares_reduction_per_year", 0.01)
+    discount_rate = estimation.get("discount_rate", 0.1)
+    terminal_growth_rate = estimation.get("terminal_growth_rate", 0.03)
+    valuation_method = estimation.get("valuation_method", "PE_multiple")
+    pe_ratio_target_year = estimation.get(f"pe_ratio_{target_year}", 15)
+
+
+    # Project revenues and profits for next 5 years
+    projected_revenues = []
+    projected_profits = []
+
+    for year in range(1, 6):
+        if year == 1:
+            revenue = ltm_revenue * (1 + revenue_cagr)
+        else:
+            revenue = projected_revenues[-1] * (1 + revenue_cagr)
+        projected_revenues.append(revenue)
+
+        profit = revenue * profit_margin_target_year
+        projected_profits.append(profit)
+
+    # Calculate the terminal value in the 5th year
+    if valuation_method == "Gordon_Growth":
+        terminal_value = (projected_profits[-1] * (1 + terminal_growth_rate)) / (
+            discount_rate - terminal_growth_rate
+        )
+    elif valuation_method == "PE_multiple":
+        terminal_value = projected_profits[-1] * pe_ratio_target_year
+    else:
+        terminal_value = 0  #Default value if method does not match
+
+    # Calculate the present values for all the projected years and the terminal value
+    present_values = []
+    for year, profit in enumerate(projected_profits, 1):
+        discounted_value = profit / (1 + discount_rate) ** year
+        present_values.append(discounted_value)
+
+    discounted_terminal_value = terminal_value / (1 + discount_rate) ** 5
+
+    # Calculate intrinsic value
+    intrinsic_value = sum(present_values) + discounted_terminal_value
+
+    # Calculate intrinsic value per share considering reduction of shares
+    shares_value = shares_outstanding * ((1 - shares_reduction_per_year) ** 5)
+
+    intrinsic_value_per_share = intrinsic_value / shares_value
+
+    gap = (intrinsic_value_per_share - current_price) / current_price
+    signal = "bullish" if gap > 0.15 else "bearish" if gap < -0.15 else "neutral"
+
+    reasoning = {       
+        "details": {
+            "intrinsic_value_per_share": round(intrinsic_value_per_share, 2),
+            "estimated_metrics": estimation,
+            "ltm_revenue": ltm_revenue,
+            "shares_outstanding": shares_outstanding,
+        },
+    }
+
+    message_content = {
+        "signal": signal,
+        "confidence": f"{abs(gap):.0%}",
+        "reasoning": reasoning
+    }
+    message = HumanMessage(
+        content=json.dumps(message_content),
+        name="valuation_agent",
+    )
+
+    reasoning_output = show_agent_reasoning(message.content) if show_reasoning else None
+
+    return {"messages": state["messages"] + [message],
+            "data": data,
+            "agent_reasoning": {
+            **state.get("agent_reasoning", {}),
+            "valuation_agent": reasoning_output
+            }}
+
+
 ##### Risk Management Agent #####
 def risk_management_agent(state: AgentState):
     """Evaluates portfolio risk and sets position limits"""
     show_reasoning = state["metadata"]["show_reasoning"]
     portfolio = state["data"]["portfolio"]
     data = state["data"]
-    start_date = data["start_date"]
-    end_date = data["end_date"]
     prices = data["prices"]
 
     # Convert prices to a DataFrame
@@ -406,19 +573,22 @@ def risk_management_agent(state: AgentState):
 
     quant_message = next(msg for msg in state["messages"] if msg.name == "quant_agent")
     fundamentals_message = next(msg for msg in state["messages"] if msg.name == "fundamentals_agent")
+    valuation_message = next(msg for msg in state["messages"] if msg.name == "valuation_agent")
 
     try:
         fundamental_signals = json.loads(fundamentals_message.content)
         technical_signals = json.loads(quant_message.content)
+        valuation_signals = json.loads(valuation_message.content)
 
     except Exception as e:
         fundamental_signals = ast.literal_eval(fundamentals_message.content)
         technical_signals = ast.literal_eval(quant_message.content)
-
+        valuation_signals = ast.literal_eval(valuation_message.content)
         
     agent_signals = {
         "fundamental": fundamental_signals,
-        "technical": technical_signals
+        "technical": technical_signals,
+        "valuation": valuation_signals
     }
 
     # 1. Calculate Risk Metrics
@@ -505,7 +675,7 @@ def risk_management_agent(state: AgentState):
     elif risk_score >= 6:
         trading_action = "reduce"
     else:
-        trading_action = agent_signals['fundamental']['signal']
+        trading_action = agent_signals['valuation']['signal']
 
     message_content = {
         "max_position_size": float(max_position_size),
@@ -549,6 +719,7 @@ def portfolio_management_agent(state: AgentState):
     quant_message = next(msg for msg in state["messages"] if msg.name == "quant_agent")
     fundamentals_message = next(msg for msg in state["messages"] if msg.name == "fundamentals_agent")
     risk_message = next(msg for msg in state["messages"] if msg.name == "risk_management_agent")
+    valuation_message = next(msg for msg in state["messages"] if msg.name == "valuation_agent")
 
     # Create the prompt template
     template = ChatPromptTemplate.from_messages(
@@ -556,29 +727,8 @@ def portfolio_management_agent(state: AgentState):
             (
                 "system",
                 """You are a portfolio manager making final trading decisions.
-                Your job is to make a trading decision based on the team's analysis while strictly adhering
-                to risk management constraints.
+                Your job is to make a trading decision based on the team's analysis.
                 Add metric values to enrich the analysis.
-
-                RISK MANAGEMENT CONSTRAINTS:
-                - You MUST NOT exceed the max_position_size specified by the risk manager
-                - You MUST follow the trading_action (buy/sell/hold) recommended by risk management
-                - These are hard constraints that cannot be overridden by other signals
-
-                When weighing the different signals for direction and timing:
-                1. Fundamental Analysis (60% weight)
-                   - Business quality and growth assessment
-                   - Determines conviction in long-term potential
-                
-                2. Quant Analysis (40% weight)
-                   - Secondary confirmation
-                   - Helps with entry/exit timing
-                
-                The decision process should be:
-                1. First check risk management constraints
-                2. Then evaluate fundamentals signal
-                3. Use quant analysis for timing
-                4. Make the final decision based on the combined signals
 
                 Provide the following in your output as json:
                 - "price": <(Current Price):.2f>
@@ -587,12 +737,13 @@ def portfolio_management_agent(state: AgentState):
                 - "amount": <(porfolio_cash * max_position_size / 100):.2f>
                 - "quantity": <(amount / price)>
                 - "agent_signals": <list of agent signals including agent name, signal (bullish | bearish | neutral), and their confidence>
-                - "reasoning": <concise explanation of the decision including how you weighted the signals>
+                - "reasoning": <concise explanation of the decision including metrics and how you weighted the signals>
                 
                 Trading Rules:
                 - Never exceed risk management position limits
                 - Only buy if you have available cash
                 - Only sell if you have shares to sell
+                - When Hold, no amount or quantity is needed
                 - Quantity must be ≤ current position for sells
                 - Quantity must be ≤ max_position_size from risk management
 
@@ -606,6 +757,7 @@ def portfolio_management_agent(state: AgentState):
 
                 Quant Analysis Trading Signal: {quant_message}
                 Fundamental Analysis Trading Signal: {fundamentals_message}
+                Valuation Analysis Trading Signal: {valuation_message}
                 Risk Management Trading Signal: {risk_message}
 
                 Here is the current portfolio:
@@ -632,7 +784,8 @@ def portfolio_management_agent(state: AgentState):
     prompt = template.invoke(
         {
             "quant_message": quant_message.content,
-            "fundamentals_message": fundamentals_message.content, 
+            "fundamentals_message": fundamentals_message.content,
+            "valuation_message": valuation_message.content,
             "risk_message": risk_message.content,
             "portfolio_cash": f"{portfolio['cash']:.2f}",
             "portfolio_stock": portfolio["stock"],
@@ -669,32 +822,6 @@ def show_agent_reasoning(output):
         output: La salida del agente (puede ser un diccionario, lista, cadena JSON, o cadena de texto)
         agent_name: Nombre del agente para mostrar en el encabezado
     """
-
-    
-    def parse_output_to_json(output):
-        # Si ya es un diccionario o lista, devolverlo tal cual
-        if isinstance(output, (dict, list)):
-            return output
-        
-        # Si es una cadena, intentar parsearla de múltiples formas
-        if isinstance(output, str):
-            # Limpiar la cadena de posibles marcadores de código
-            cleaned_output = re.sub(r"```(json)?", '', output).strip()
-            
-            try:
-                # Intentar parsear directamente
-                return json.loads(cleaned_output)
-            except json.JSONDecodeError:
-                # Si falla, intentar extraer un JSON entre llaves
-                try:
-                    match = re.search(r'(\{.*\})', cleaned_output, re.DOTALL)
-                    if match:
-                        return json.loads(match.group(1))
-                except:
-                    pass
-        
-        # Si no se puede convertir a JSON, convertir a diccionario simple
-        return {"raw_output": str(output)}
 
     try:
         # Convertir la salida a un formato JSON que Streamlit pueda mostrar
@@ -737,6 +864,7 @@ workflow = StateGraph(AgentState)
 workflow.add_node("market_data_agent", market_data_agent)
 workflow.add_node("quant_agent", quant_agent)
 workflow.add_node("fundamentals_agent", fundamentals_agent)
+workflow.add_node("valuation_agent", valuation_agent)
 workflow.add_node("risk_management_agent", risk_management_agent)
 workflow.add_node("portfolio_management_agent", portfolio_management_agent)
 
@@ -744,8 +872,10 @@ workflow.add_node("portfolio_management_agent", portfolio_management_agent)
 workflow.set_entry_point("market_data_agent")
 workflow.add_edge("market_data_agent", "quant_agent")
 workflow.add_edge("market_data_agent", "fundamentals_agent")
+workflow.add_edge("market_data_agent", "valuation_agent")
 workflow.add_edge("quant_agent", "risk_management_agent")
 workflow.add_edge("fundamentals_agent", "risk_management_agent")
+workflow.add_edge("valuation_agent", "risk_management_agent")
 workflow.add_edge("risk_management_agent", "portfolio_management_agent")
 workflow.add_edge("portfolio_management_agent", END)
 
@@ -765,7 +895,7 @@ if __name__ == "__main__":
     with left:
         ticker_input = st.text_input("Enter Ticker", max_chars=5)
     with middle:
-        percentage_input = st.slider("Enter Percentage", 0.0, 100.0, 100.0, 1.0) / 100
+        percentage_input = st.slider("Enter Percentage", 0.0, 100.0, 0.0, 1.0) / 100
     with right:
         add_button = st.button("Add Ticker")
 
@@ -795,9 +925,9 @@ if __name__ == "__main__":
         for ticker, percentage in st.session_state.portfolio.items():
             portfolio_data.append({
                 "Ticker": ticker,
-                "Percentage": (percentage * 100)
+                "Percentage": float(percentage * 100)
             })
-            total_percentage += percentage
+            total_percentage += (percentage * 100)
         
         # Display the portfolio as a table
         st.table(portfolio_data)
@@ -818,7 +948,7 @@ if __name__ == "__main__":
     for ticker, value in st.session_state.portfolio.items():
         st.session_state.portfolio_details[ticker] = {"cash": cash, "stock": value, "invested": invested}
 
-    start_date = st.date_input(f'Start Date', value=datetime.now() - timedelta(days=252))
+    start_date = st.date_input(f'Start Date', value=datetime.now() - timedelta(days=365))
     end_date = st.date_input(f'End Date', value=datetime.now())
     show_reasoning = st.checkbox(f'Show Reasoning from Each Agent')
 

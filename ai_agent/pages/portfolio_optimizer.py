@@ -132,7 +132,7 @@ def main():
         st.write("Current Tickers:")
         st.write(st.session_state.tickers)
 
-    if st.button("Calculate Portfolio"):
+    if st.button("Calculate Portfolio",type="primary"):
         with st.spinner("Calculating optimal portfolio..."):
             weights_df = create_optimal_portfolio_with_genetic(st.session_state.tickers, portfolio_size, cash_percentage)
 

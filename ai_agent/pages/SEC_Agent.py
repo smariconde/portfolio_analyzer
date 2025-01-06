@@ -139,9 +139,9 @@ def create_pdf(data):
 
 if __name__ == "__main__":
     st.title("SEC Agent")
-    st.subheader("Agent that analyse a company using 10-K or 10-Q filings")
-    ticker = st.text_input("Enter Ticker Symbol (e.g., AAPL):", "AAPL")
-    if st.button("Analyze Filing"):
+    st.subheader("Agent that analyses companies 10-K or 10-Q filings")
+    ticker = st.text_input("Enter Ticker Symbol (e.g., AAPL):", max_chars=5, value="AAPL").upper()
+    if st.button("Analyze Filing",type="primary"):
         result = sec_agent(ticker)
         # Iterar sobre las secciones del JSON
         for section, content in json.loads(result).items():
