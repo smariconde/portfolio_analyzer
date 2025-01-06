@@ -1,11 +1,28 @@
-import os, math
+import os, math, json, re
 import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
 from tavily import TavilyClient
 from typing import Dict
-  
+
+def parse_output_to_json(output):
+    """Parses a string or object into a JSON dictionary."""
+    if isinstance(output, (dict, list)):
+        return output
+    if isinstance(output, str):
+        cleaned_output = re.sub(r"```(json)?", '', output).strip()
+        try:
+            return json.loads(cleaned_output)
+        except json.JSONDecodeError:
+            try:
+                match = re.search(r'(\{.*\})', cleaned_output, re.DOTALL)
+                if match:
+                    return json.loads(match.group(1))
+            except:
+                pass
+    return {"raw_output": str(output)}
+
 def get_prices(ticker, start_date, end_date):
     """Fetch price data from the API."""
     headers = {"X-API-KEY": os.environ.get("FINANCIAL_DATASETS_API_KEY")}

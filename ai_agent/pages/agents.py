@@ -1,6 +1,6 @@
 from typing import Annotated, Any, Dict, Sequence, TypedDict
 
-import operator, os, json, re, time
+import operator, os, json, re, time, ast, math
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -396,60 +396,135 @@ def risk_management_agent(state: AgentState):
     """Evaluates portfolio risk and sets position limits"""
     show_reasoning = state["metadata"]["show_reasoning"]
     portfolio = state["data"]["portfolio"]
+    data = state["data"]
+    start_date = data["start_date"]
+    end_date = data["end_date"]
+    prices = data["prices"]
+
+    # Convert prices to a DataFrame
+    prices_df = prices_to_df(prices)    
 
     quant_message = next(msg for msg in state["messages"] if msg.name == "quant_agent")
     fundamentals_message = next(msg for msg in state["messages"] if msg.name == "fundamentals_agent")
 
-    # Create the prompt template
-    template = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """You are a risk management specialist.
-                Your job is to take a look at the trading analysis and
-                evaluate portfolio exposure and recommend the percentage position sizing.
-                Provide the following in your output (as a JSON):
-                "max_position_size": <float between 1 and 100>,
-                "risk_score": <integer between 1 and 10>,
-                "trading_action": <buy | sell | hold>,
-                "reasoning": <concise explanation of the decision>
-                Max position size must be the maximum percentage of the portfolio of this stock.
-                """
-            ),
-            (
-                "human",
-                """Based on the trading analysis below, provide your risk assessment.
-                For fundamental analysis take in account common industry valuations and metrics. 
+    try:
+        fundamental_signals = json.loads(fundamentals_message.content)
+        technical_signals = json.loads(quant_message.content)
 
-                Quant Analysis Trading Signal: {quant_message}
-                Fundamental Analysis Trading Signal: {fundamentals_message}
+    except Exception as e:
+        fundamental_signals = ast.literal_eval(fundamentals_message.content)
+        technical_signals = ast.literal_eval(quant_message.content)
 
-                Here is the current portfolio:
-                Portfolio:
-                Cash Available: {portfolio_cash}
-                Current Position: {portfolio_stock} % 
-                
-                Only include the max position size, risk score, trading action, and reasoning in your JSON output.
-                Do not include any JSON markdown.
-                """
-            ),
-        ]
-    )
+        
+    agent_signals = {
+        "fundamental": fundamental_signals,
+        "technical": technical_signals
+    }
 
-    # Generate the prompt
-    prompt = template.invoke(
-        {
-            "quant_message": quant_message.content,
-            "fundamentals_message": fundamentals_message.content,
-            "portfolio_cash": f"{portfolio['cash']:.2f}",
-            "portfolio_stock": portfolio["stock"]
+    # 1. Calculate Risk Metrics
+    returns = prices_df['close'].pct_change().dropna()
+    daily_vol = returns.std()
+    volatility = daily_vol * (252 ** 0.5)  # Annualized volatility approximation
+    var_95 = returns.quantile(0.05)         # Simple historical VaR at 95% confidence
+    max_drawdown = (prices_df['close'] / prices_df['close'].cummax() - 1).min()
+
+    # 2. Market Risk Assessment
+    market_risk_score = 0
+
+    # Volatility scoring
+    if volatility.any() > 0.30:     # High volatility
+        market_risk_score += 2
+    elif volatility.any() > 0.20:   # Moderate volatility
+        market_risk_score += 1
+
+    # VaR scoring
+    # Note: var_95 is typically negative. The more negative, the worse.
+    if var_95.any() < -0.03:
+        market_risk_score += 2
+    elif var_95.any() < -0.02:
+        market_risk_score += 1
+
+    # Max Drawdown scoring
+    if max_drawdown.any() < -0.20:  # Severe drawdown
+        market_risk_score += 2
+    elif max_drawdown.any() < -0.10:
+        market_risk_score += 1
+
+    # 3. Position Size Limits
+    # Consider total portfolio value, not just cash
+    current_stock_value = portfolio['invested'] * portfolio['stock']
+    total_portfolio_value = portfolio['cash'] + portfolio['invested']
+    base_position_size = total_portfolio_value * 0.25  # Start with 25% max position of total portfolio
+    
+    if market_risk_score >= 4:
+        # Reduce position for high risk
+        max_position_size = base_position_size * 0.5
+    elif market_risk_score >= 2:
+        # Slightly reduce for moderate risk
+        max_position_size = base_position_size * 0.75
+    else:
+        # Keep base size for low risk
+        max_position_size = base_position_size
+
+    # 4. Stress Testing
+    stress_test_scenarios = {
+        "market_crash": -0.20,
+        "moderate_decline": -0.10,
+        "slight_decline": -0.05
+    }
+
+    stress_test_results = {}
+    current_position_value = current_stock_value
+
+    for scenario, decline in stress_test_scenarios.items():
+        potential_loss = current_position_value * decline
+        portfolio_impact = potential_loss / (portfolio['cash'] + current_position_value) if (portfolio['cash'] + current_position_value) != 0 else math.nan
+        stress_test_results[scenario] = {
+            "potential_loss": potential_loss,
+            "portfolio_impact": portfolio_impact
         }
-    )
+    
+    # 5. Risk-Adjusted Signals Analysis
+    # Convert all confidences to numeric for proper comparison
+    def parse_confidence(conf_str):
+        return float(conf_str.replace('%', '')) / 100.0
+    low_confidence = any(parse_confidence(signal['confidence']) < 0.30 for signal in agent_signals.values())
 
-    # Invoke the LLM
-    result = llm.invoke(prompt)
+    risk_score = (market_risk_score * 2)  # Market risk contributes up to ~6 points total when doubled
+    if low_confidence:
+        risk_score += 4  # Add penalty if any signal confidence < 30%   
+
+    # Cap risk score at 10
+    risk_score = min(round(risk_score), 10)
+
+    # 6. Generate Trading Action
+    # If risk is very high, hold. If moderately high, consider reducing.
+    # Else, follow valuation signal as a baseline.
+    if risk_score >= 8:
+        trading_action = "hold"
+    elif risk_score >= 6:
+        trading_action = "reduce"
+    else:
+        trading_action = agent_signals['fundamental']['signal']
+
+    message_content = {
+        "max_position_size": float(max_position_size),
+        "risk_score": risk_score,
+        "trading_action": trading_action,
+        "risk_metrics": {
+            "volatility": float(volatility),
+            "value_at_risk_95": float(var_95),
+            "max_drawdown": float(max_drawdown),
+            "market_risk_score": market_risk_score,
+            "stress_test_results": stress_test_results
+        },
+        "reasoning": f"Risk Score {risk_score}/10: Market Risk={market_risk_score}, "
+                     f"Volatility={float(volatility):.2%}, VaR={float(var_95):.2%}, "
+                     f"Max Drawdown={float(max_drawdown):.2%}"
+    }
+
     message = HumanMessage(
-        content=result.content,
+        content=json.dumps(message_content),
         name="risk_management_agent",
     )
 
@@ -508,7 +583,7 @@ def portfolio_management_agent(state: AgentState):
                 Provide the following in your output as json:
                 - "price": <(Current Price):.2f>
                 - "action": <"buy" | "sell" | "hold">
-                - "confidence": <percentage between 0 and 100>
+                - "confidence": <percentage between 0 and 100%>
                 - "amount": <(porfolio_cash * max_position_size / 100):.2f>
                 - "quantity": <(amount / price)>
                 - "agent_signals": <list of agent signals including agent name, signal (bullish | bearish | neutral), and their confidence>
@@ -690,7 +765,7 @@ if __name__ == "__main__":
     with left:
         ticker_input = st.text_input("Enter Ticker", max_chars=5)
     with middle:
-        percentage_input = st.slider("Enter Percentage", 0.0, 100.0, 100.0, 1.0)
+        percentage_input = st.slider("Enter Percentage", 0.0, 100.0, 100.0, 1.0) / 100
     with right:
         add_button = st.button("Add Ticker")
 
@@ -720,7 +795,7 @@ if __name__ == "__main__":
         for ticker, percentage in st.session_state.portfolio.items():
             portfolio_data.append({
                 "Ticker": ticker,
-                "Percentage": f"{percentage:.2f}%"
+                "Percentage": (percentage * 100)
             })
             total_percentage += percentage
         
@@ -736,11 +811,12 @@ if __name__ == "__main__":
     else:
         st.write("No tickers added yet")
     
-    cash = st.number_input("Cash available", value=10000)
-    
+    cash = st.number_input("Cash available", value=5000)
+    invested = st.number_input("Invested amount in portfolio", value=20000)
+
     st.session_state.portfolio_details = {}
     for ticker, value in st.session_state.portfolio.items():
-        st.session_state.portfolio_details[ticker] = {"cash": cash, "stock": value}
+        st.session_state.portfolio_details[ticker] = {"cash": cash, "stock": value, "invested": invested}
 
     start_date = st.date_input(f'Start Date', value=datetime.now() - timedelta(days=252))
     end_date = st.date_input(f'End Date', value=datetime.now())

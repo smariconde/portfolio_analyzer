@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from tools import get_financial_metrics
+from tools import get_financial_metrics, parse_output_to_json
 
 if "GOOGLE_API_KEY" not in os.environ:
     os.environ["GOOGLE_API_KEY"] = os.environ.get('GOOGLE_API_KEY')
@@ -21,25 +21,6 @@ llm = ChatGoogleGenerativeAI(
     max_retries=6,
     stop=None
 )
-
-
-def parse_output_to_json(output):
-    """Parses a string or object into a JSON dictionary."""
-    if isinstance(output, (dict, list)):
-        return output
-    if isinstance(output, str):
-        cleaned_output = re.sub(r"```(json)?", '', output).strip()
-        try:
-            return json.loads(cleaned_output)
-        except json.JSONDecodeError:
-            try:
-                match = re.search(r'(\{.*\})', cleaned_output, re.DOTALL)
-                if match:
-                    return json.loads(match.group(1))
-            except:
-                pass
-    return {"raw_output": str(output)}
-
 
 def valuation_agent(ticker: str):
     """Calculates the intrinsic value of a company using a 5-year DCF model."""
