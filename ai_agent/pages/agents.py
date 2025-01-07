@@ -18,7 +18,7 @@ if "GOOGLE_API_KEY" not in os.environ:
 
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.0-flash-exp",
-    temperature=0,
+    temperature=0.1,
     max_tokens=None,
     max_retries=6,
     stop=None
@@ -439,7 +439,7 @@ def valuation_agent(state: AgentState):
             ),
             (
                 "human",
-                f"""Based on the company below, provide the data for the valuation model.
+                f"""Based on the company below, provide the data for the valuation model. Make your best estimate and assumptions.
                     Company: {ticker}
                     Industry: {industry}
                     Sector: {sector}
@@ -528,7 +528,7 @@ def valuation_agent(state: AgentState):
 
     intrinsic_value_per_share = intrinsic_value / shares_value
 
-    gap = (intrinsic_value_per_share - current_price) / current_price
+    gap = min(((intrinsic_value_per_share - current_price) / current_price), 1.0)
     signal = "bullish" if gap > 0.15 else "bearish" if gap < -0.15 else "neutral"
 
     reasoning = {       
@@ -662,35 +662,77 @@ def risk_management_agent(state: AgentState):
 
     risk_score = (market_risk_score * 2)  # Market risk contributes up to ~6 points total when doubled
     if low_confidence:
-        risk_score += 4  # Add penalty if any signal confidence < 30%   
+        risk_score += 2  # Add penalty if any signal confidence < 30%   
 
     # Cap risk score at 10
     risk_score = min(round(risk_score), 10)
 
     # 6. Generate Trading Action
-    # If risk is very high, hold. If moderately high, consider reducing.
-    # Else, follow valuation signal as a baseline.
     if risk_score >= 8:
-        trading_action = "hold"
-    elif risk_score >= 6:
         trading_action = "reduce"
+    elif risk_score >= 6:
+        trading_action = "hold"
     else:
-        trading_action = agent_signals['valuation']['signal']
+        trading_action = "add"
 
+    # Calculate confidence scores for each metric
+    def calculate_metric_confidence(metric, thresholds):
+        """
+        Calculate confidence score based on metric value and predefined thresholds
+        Returns confidence percentage and assessment
+        """
+        if (abs(metric) <= thresholds['low']).all():
+            return 90, "High confidence: Metric within normal range"
+        elif (abs(metric) <= thresholds['medium']).all():
+            return 70, "Moderate confidence: Metric showing some volatility"
+        else:
+            return 50, "Low confidence: Metric showing high volatility"
+
+    # Define thresholds for each metric
+    metric_thresholds = {
+        'volatility': {'low': 0.15, 'medium': 0.25},
+        'var': {'low': 0.02, 'medium': 0.03},
+        'drawdown': {'low': 0.15, 'medium': 0.2}
+    }
+
+    # Calculate confidence for each metric
+    volatility_conf, vol_assessment = calculate_metric_confidence(volatility, metric_thresholds['volatility'])
+    var_conf, var_assessment = calculate_metric_confidence(abs(var_95), metric_thresholds['var'])
+    drawdown_conf, dd_assessment = calculate_metric_confidence(abs(max_drawdown), metric_thresholds['drawdown'])
+
+    # Calculate overall risk confidence
+    confidence = round((volatility_conf + var_conf + drawdown_conf) / 3)
+
+    # Update the message_content with confidence metrics
     message_content = {
         "max_position_size": float(max_position_size),
         "risk_score": risk_score,
         "trading_action": trading_action,
+        "confidence": f"{confidence}%",
         "risk_metrics": {
-            "volatility": float(volatility),
-            "value_at_risk_95": float(var_95),
-            "max_drawdown": float(max_drawdown),
+            "volatility": {
+                "value": float(volatility),
+                "confidence": f"{volatility_conf}%",
+                "assessment": vol_assessment
+            },
+            "value_at_risk_95": {
+                "value": float(var_95),
+                "confidence": f"{var_conf}%",
+                "assessment": var_assessment
+            },
+            "max_drawdown": {
+                "value": float(max_drawdown),
+                "confidence": f"{drawdown_conf}%",
+                "assessment": dd_assessment
+            },
             "market_risk_score": market_risk_score,
             "stress_test_results": stress_test_results
         },
         "reasoning": f"Risk Score {risk_score}/10: Market Risk={market_risk_score}, "
-                     f"Volatility={float(volatility):.2%}, VaR={float(var_95):.2%}, "
-                     f"Max Drawdown={float(max_drawdown):.2%}"
+                    f"Confidence={confidence}%, "
+                    f"Volatility={float(volatility):.2%} (Conf: {volatility_conf}%), "
+                    f"VaR={float(var_95):.2%} (Conf: {var_conf}%), "
+                    f"Max Drawdown={float(max_drawdown):.2%} (Conf: {drawdown_conf}%)"
     }
 
     message = HumanMessage(
@@ -970,7 +1012,7 @@ if __name__ == "__main__":
             st.error(f"End date must be in YYYY-MM-DD format")
     
     # Button to run the hedge fund
-    if st.button('Run Hedge Fund', type="secondary"):            
+    if st.button('Run Agents Analysis', type="primary"):            
         for ticker, details in st.session_state.portfolio_details.items():
             result, logo_url, agent_reasoning = run_hedge_fund(
                 ticker=ticker,

@@ -440,7 +440,7 @@ def weighted_signal_combination(signals, weights):
 
     return {
         'signal': signal,
-        'confidence': abs(final_score)
+        'confidence': abs(total_confidence),
     }
 
 def normalize_pandas(obj):
