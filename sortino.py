@@ -27,8 +27,8 @@ def analyze_sector_with_sortino(sector_name):
     two_years_ago_str = two_years_ago.strftime('%Y-%m-%d')
     five_years_ago_str = five_years_ago.strftime('%Y-%m-%d')
 
-    data = yf.download(sector_tickers, start=five_years_ago_str, end=today.strftime('%Y-%m-%d'))["Adj Close"]
-    sp500_data = yf.download("^GSPC", start=five_years_ago_str, end=today.strftime('%Y-%m-%d'))["Adj Close"]
+    data = yf.download(sector_tickers, start=five_years_ago_str, end=today.strftime('%Y-%m-%d'))["Close"]
+    sp500_data = yf.download("^GSPC", start=five_years_ago_str, end=today.strftime('%Y-%m-%d'))["Close"]
     sp500_returns = sp500_data.pct_change()
 
     risk_free_rate = 0.02
@@ -64,7 +64,7 @@ def analyze_sector_with_sortino(sector_name):
         
         if ticker in cedears:
             ax.scatter(sortino_df.loc[ticker, "2 Years"], sortino_df.loc[ticker, "5 Years"], s=200, color="magenta", alpha=0.7, label=f"{ticker} (CEDEAR)")
-            if (sortino_df.loc[ticker, "2 Years"] > sortino_sp500_2yr) & (sortino_df.loc[ticker, "5 Years"] > sortino_sp500_5yr):
+            if (sortino_df.loc[ticker, "2 Years"] > sortino_sp500_2yr).all() and (sortino_df.loc[ticker, "5 Years"] > sortino_sp500_5yr).all():
                 cedears_selection.append(ticker)
         else:
             ax.scatter(sortino_df.loc[ticker, "2 Years"], sortino_df.loc[ticker, "5 Years"], s=200, color="cyan", alpha=0.3, label=f"{ticker} (Stock)")
@@ -75,8 +75,8 @@ def analyze_sector_with_sortino(sector_name):
     for ticker in sortino_df.index:
         ax.text(sortino_df.loc[ticker, "2 Years"], sortino_df.loc[ticker, "5 Years"], ticker, color="white", fontsize=6, alpha=0.99, ha="center", va="center")
 
-    ax.axhline(sortino_sp500_5yr, color="gray", linestyle="--", linewidth=0.8)
-    ax.axvline(sortino_sp500_2yr, color="gray", linestyle="--", linewidth=0.8)
+    ax.axhline(sortino_sp500_5yr.item(), color="gray", linestyle="--", linewidth=0.8)
+    ax.axvline(sortino_sp500_2yr.item(), color="gray", linestyle="--", linewidth=0.8)
 
     sortino_df = sortino_df.replace([np.inf, -np.inf], np.nan).dropna(subset=["2 Years", "5 Years"])
 

@@ -6,7 +6,7 @@ st.set_page_config(page_title="AI Financial Agents", page_icon=":material/home:"
 # st.logo("Banner-GPT-generated.webp")
 
 
-st.markdown("# Financial Agents 📈 🤖")
+st.markdown("# Financial Agents :material/finance_mode: :material/network_intelligence:")
 
 st.markdown("""
             #### AI Powered Finance Agents

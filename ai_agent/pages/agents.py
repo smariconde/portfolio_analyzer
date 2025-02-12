@@ -83,7 +83,7 @@ def quant_agent(state: AgentState):
     data = state["data"]
     prices = data["prices"]
     prices_df = prices_to_df(prices)
-    
+    print(prices_df)
     current_price = prices_df['close'].iloc[-1].item()
 
     # Calculate indicators
@@ -248,7 +248,7 @@ def quant_agent(state: AgentState):
                 "metrics": normalize_pandas(stat_arb_signals['metrics'])
             }
         },
-        "Current Price": current_price
+        "current_price": round(current_price, 2),
 
     }
 
@@ -537,6 +537,10 @@ def valuation_agent(state: AgentState):
             "estimated_metrics": estimation,
             "ltm_revenue": ltm_revenue,
             "shares_outstanding": shares_outstanding,
+            "trailing_pe": trailing_pe,
+            "revenue_growth": revenue_growth,
+            "earnings_growth": earnings_growth,
+            "current_profit_margin": current_profit_margin,
         },
     }
 
@@ -773,7 +777,7 @@ def portfolio_management_agent(state: AgentState):
                 Add metric values to enrich the analysis.
 
                 Provide the following in your output as json:
-                - "price": <(Current Price):.2f>
+                - "price": <(current_price):.2f>
                 - "action": <"buy" | "sell" | "hold">
                 - "confidence": <percentage between 0 and 100%>
                 - "amount": <(porfolio_cash * max_position_size / 100):.2f>
@@ -926,7 +930,7 @@ app = workflow.compile()
 # Add this at the bottom of the file
 if __name__ == "__main__":
     st.set_page_config(page_title="Portfolio AI Agents Analysis", page_icon=":material/finance_mode:")
-    st.title("Portfolio AI Agents Analysis")
+    st.title("Portfolio AI Agents Analysis :material/finance_mode:")
 
     # Create input fields for user inputs
     if 'portfolio' not in st.session_state:
