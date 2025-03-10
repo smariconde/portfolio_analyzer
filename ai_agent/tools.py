@@ -49,15 +49,26 @@ def prices_to_df(prices):
     """Convert prices to a DataFrame."""
     df = pd.DataFrame(prices)
     # df = df.drop(columns=["Close"])
-    df = df.rename(
-        columns={
-            "Open": "open",
-            "Adj Close": "close",
-            "High": "high",
-            "Low": "low",
-            "Volume": "volume",
-        }
-    )
+    if "Adj Close" in df.columns:
+        df = df.rename(
+            columns={
+                "Open": "open",
+                "Adj Close": "close",
+                "High": "high",
+                "Low": "low",
+                "Volume": "volume",
+            }
+        )
+    elif "Close" in df.columns:
+        df = df.rename(
+            columns={
+                "Open": "open",
+                "Close": "close",
+                "High": "high",
+                "Low": "low",
+                "Volume": "volume",
+            }
+        )
     df.sort_index(inplace=True)
     return df
 

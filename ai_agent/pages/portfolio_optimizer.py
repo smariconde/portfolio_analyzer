@@ -36,7 +36,7 @@ def create_optimal_portfolio_with_genetic(tickers, portfolio_size, cash_percenta
     end_date = datetime.today()
     start_date = end_date - timedelta(days=5 * 365)
     try:
-        data = yf.download(tickers, start=start_date, end=end_date)['Adj Close']
+        data = yf.download(tickers, start=start_date, end=end_date)['Close']
     except Exception as e:
         st.error(f"Error downloading data for tickers: {e}")
         return pd.DataFrame()

@@ -170,6 +170,10 @@ def valuation_agent(ticker: str):
             "estimated_metrics": estimation,
             "ltm_revenue": ltm_revenue,
             "shares_outstanding": shares_outstanding,
+            "trailing_pe": trailing_pe,
+            "revenue_growth": revenue_growth,
+            "earnings_growth": earnings_growth,
+            "current_profit_margin": current_profit_margin,
         },
     }
 
@@ -178,7 +182,7 @@ def valuation_agent(ticker: str):
 
 if __name__ == "__main__":
     st.set_page_config(page_title="Valuation AI Agent", page_icon=":material/calculate:")
-    st.title("Valuation Agent")
+    st.title("Valuation Agent :material/calculate:")
     ticker = st.text_input("Enter Ticker", "AAPL", max_chars=5).upper()
 
     if st.button("Get Valuation", type="primary"):
