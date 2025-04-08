@@ -3,7 +3,7 @@ import yfinance as yf
 import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
-import os
+import os, ssl
 
 headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36',
@@ -102,6 +102,7 @@ def analyze_sector_with_sortino(sector_name):
     ax.set_xlabel("Sortino Ratio (2 Years)", color="white")
     ax.set_ylabel("Sortino Ratio (5 Years)", color="white")
     ax.set_title(f"{sector_name} Sector Risk Quadrant (Sortino Ratio)", color="white")
+    os.makedirs("./charts", exist_ok=True)  # Ensure the directory exists
     plt.savefig(os.path.join("./charts", f"{sector_name}.png"), dpi=300)
     # plt.show()
 
