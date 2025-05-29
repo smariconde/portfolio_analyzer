@@ -90,12 +90,18 @@ def analyze_sector_with_sortino(sector_name):
     plt.style.use("dark_background")
     fig, ax = plt.subplots(figsize=(16, 7), dpi=120)
 
+    # Initialize cedears_selection for the current sector analysis
+    cedears_selection_sector = []
+
     for ticker in sortino_df.index:
-        
-        if ticker in cedears:
+        # Check if the ticker or its alternative form ('BRK/B' for 'BRK-B') is in cedears
+        is_cedear = ticker in cedears or (ticker == 'BRK-B' and 'BRK/B' in cedears)
+
+        if is_cedear:
             ax.scatter(sortino_df.loc[ticker, "2 Years"], sortino_df.loc[ticker, "5 Years"], s=200, color="magenta", alpha=0.7, label=f"{ticker} (CEDEAR)")
+            # Check selection criteria
             if (sortino_df.loc[ticker, "2 Years"] > sortino_sp500_2yr).all() and (sortino_df.loc[ticker, "5 Years"] > sortino_sp500_5yr).all():
-                cedears_selection.append(ticker)
+                cedears_selection_sector.append(ticker) # Append to sector-specific list
         else:
             ax.scatter(sortino_df.loc[ticker, "2 Years"], sortino_df.loc[ticker, "5 Years"], s=200, color="cyan", alpha=0.3, label=f"{ticker} (Stock)")
 
@@ -137,23 +143,26 @@ def analyze_sector_with_sortino(sector_name):
     plt.savefig(os.path.join("./charts", f"{sector_name}.png"), dpi=300)
     plt.close(fig) # Close the figure to free memory
     # plt.show()
-    return sortino_df_full # Return the full dataframe (including NaNs) for CSV export
+    # Return the full dataframe and the sector-specific selection
+    return sortino_df_full, cedears_selection_sector
 
 
 if __name__ == "__main__":
 
     sectors = ['Industrials','Health Care','Information Technology','Utilities','Financials','Materials','Consumer Discretionary','Real Estate','Communication Services','Consumer Staples','Energy']
-    cedears_selection = []
+    cedears_selection_global = [] # Renamed to avoid conflict and store globally
     all_sector_dfs = [] # List to store dataframes from each sector
 
     print("Analyzing sectors...")
     for i, sector in enumerate(sectors):
         print(f"Processing sector {i+1}/{len(sectors)}: {sector}")
         try:
-            sector_df = analyze_sector_with_sortino(sector)
+            # Unpack the returned dataframe and selection list
+            sector_df, sector_cedears = analyze_sector_with_sortino(sector)
             if not sector_df.empty:
                 sector_df['Sector'] = sector # Add sector column
                 all_sector_dfs.append(sector_df)
+                cedears_selection_global.extend(sector_cedears) # Add selected cedears from this sector
             else:
                 print(f"Warning: No valid Sortino data generated for sector {sector}")
         except Exception as e:
@@ -170,12 +179,15 @@ if __name__ == "__main__":
         print("No dataframes to combine. Output CSV not created.")
 
 
-    # Save the cedears selection as before
+    # Save the global cedears selection
     output_txt_path = "cedears_selection.txt"
     with open(output_txt_path, "w") as file:
-        if cedears_selection:
-            file.write(", ".join(cedears_selection))
-            file.write('\nhttps://finviz.com/screener.ashx?v=340&t=' + ','.join(cedears_selection))
+        # Use the global list now
+        if cedears_selection_global:
+            # Remove duplicates if a ticker appears in multiple sectors and sort
+            unique_cedears = sorted(list(set(cedears_selection_global)))
+            file.write(", ".join(unique_cedears))
+            file.write('\nhttps://finviz.com/screener.ashx?v=340&t=' + ','.join(unique_cedears))
         else:
             file.write("No CEDEARs met the selection criteria.")
     print(f"CEDEARs selection saved to {output_txt_path}")
