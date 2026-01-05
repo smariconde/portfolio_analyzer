@@ -4,7 +4,9 @@ langgraph
 requests
 pandas
 yfinance
+yahooquery
 tavily-python
 numpy
 matplotlib
 beautifulsoup4
+Pillow
