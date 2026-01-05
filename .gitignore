@@ -3,6 +3,10 @@ logo.png
 /charts
 cedears_selection.txt
 
+soja_brecha_final.png
+soja_precios_diario_2024.png
+chicago_data.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -125,6 +129,7 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+.DS_Store
 # PyCharm
 # JetBrains specific template is maintained in a separate JetBrains.gitignore
 # and can be added to the global gitignore or merged into this file

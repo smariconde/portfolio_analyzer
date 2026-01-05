@@ -7,3 +7,4 @@ yfinance
 tavily-python
 numpy
 matplotlib
+beautifulsoup4

@@ -4,7 +4,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import os, ssl
-import requests  # Add requests import
+import requests
+from io import StringIO
+import time
 
 headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36',
@@ -13,6 +15,25 @@ headers = {
         'DNT': '1',  # Do Not Track Request Header
         'Connection': 'close'
     }
+
+def download_with_retry(tickers, start, end, max_retries=3):
+    """Download data from yfinance with retry logic for rate limiting"""
+    for attempt in range(max_retries):
+        try:
+            data = yf.download(tickers, start=start, end=end, progress=False)
+            return data
+        except Exception as e:
+            if "Rate" in str(e) or "429" in str(e):
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 15  # 15, 30, 45 seconds
+                    print(f"Rate limited. Waiting {wait_time} seconds before retry {attempt + 2}/{max_retries}...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"Failed after {max_retries} retries due to rate limiting")
+                    raise
+            else:
+                raise
+    return None
 
 def get_cedears():
     url = "https://www.comafi.com.ar/custodiaglobal/json/apps/getproducts.aspx?ts=125.3.8.12.23"
@@ -36,7 +57,9 @@ def get_cedears():
 
 def analyze_sector_with_sortino(sector_name):
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    tables = pd.read_html(url)
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    tables = pd.read_html(StringIO(response.text))
     sp500_table = tables[0]
 
     tickers = sp500_table[sp500_table["GICS Sector"] == sector_name]["Symbol"].tolist()
@@ -49,8 +72,12 @@ def analyze_sector_with_sortino(sector_name):
     two_years_ago_str = two_years_ago.strftime('%Y-%m-%d')
     five_years_ago_str = five_years_ago.strftime('%Y-%m-%d')
 
-    data = yf.download(sector_tickers, start=five_years_ago_str, end=today.strftime('%Y-%m-%d'))["Close"]
-    sp500_data = yf.download("^GSPC", start=five_years_ago_str, end=today.strftime('%Y-%m-%d'))["Close"]
+    # Download data with retry logic
+    data_full = download_with_retry(sector_tickers, start=five_years_ago_str, end=today.strftime('%Y-%m-%d'))
+    data = data_full["Close"] if data_full is not None and not data_full.empty else pd.DataFrame()
+
+    sp500_data_full = download_with_retry("^GSPC", start=five_years_ago_str, end=today.strftime('%Y-%m-%d'))
+    sp500_data = sp500_data_full["Close"] if sp500_data_full is not None and not sp500_data_full.empty else pd.Series()
     sp500_returns = sp500_data.pct_change()
 
     risk_free_rate = 0.02
@@ -111,8 +138,8 @@ def analyze_sector_with_sortino(sector_name):
     for ticker in sortino_df.index:
         ax.text(sortino_df.loc[ticker, "2 Years"], sortino_df.loc[ticker, "5 Years"], ticker, color="white", fontsize=6, alpha=0.99, ha="center", va="center")
 
-    ax.axhline(sortino_sp500_5yr.item(), color="gray", linestyle="--", linewidth=0.8)
-    ax.axvline(sortino_sp500_2yr.item(), color="gray", linestyle="--", linewidth=0.8)
+    ax.axhline(float(sortino_sp500_5yr.iloc[0]) if isinstance(sortino_sp500_5yr, pd.Series) else sortino_sp500_5yr, color="gray", linestyle="--", linewidth=0.8)
+    ax.axvline(float(sortino_sp500_2yr.iloc[0]) if isinstance(sortino_sp500_2yr, pd.Series) else sortino_sp500_2yr, color="gray", linestyle="--", linewidth=0.8)
 
     # Keep a copy before dropping NaNs for the CSV output, but drop for plotting/regression
     sortino_df_full = sortino_df.copy() 
@@ -167,6 +194,12 @@ if __name__ == "__main__":
                 print(f"Warning: No valid Sortino data generated for sector {sector}")
         except Exception as e:
             print(f"Error processing sector {sector}: {e}")
+
+        # Add delay between sectors to avoid rate limiting (except after the last sector)
+        if i < len(sectors) - 1:
+            delay = 10  # 10 seconds delay between sectors
+            print(f"Waiting {delay} seconds before next sector to avoid rate limiting...")
+            time.sleep(delay)
 
     # Combine all sector dataframes
     if all_sector_dfs:
