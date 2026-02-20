@@ -1,6 +1,7 @@
 streamlit
 langchain
 langgraph
+langchain-google-genai
 requests
 pandas
 yfinance
@@ -10,3 +11,7 @@ numpy
 matplotlib
 beautifulsoup4
 Pillow
+fpdf
+deap
+PyPortfolioOpt
+xlrd>=2.0.1

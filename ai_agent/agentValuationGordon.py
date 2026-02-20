@@ -7,10 +7,11 @@ from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from tools import get_financial_metrics
+from ai_agent.tools import get_financial_metrics
 
-if "GOOGLE_API_KEY" not in os.environ:
-    os.environ["GOOGLE_API_KEY"] = os.environ.get('GOOGLE_API_KEY')
+api_key = os.environ.get("GOOGLE_API_KEY")
+if api_key:
+    os.environ["GOOGLE_API_KEY"] = api_key
 
 llm = ChatGoogleGenerativeAI(
     model="gemini-1.5-flash-002",

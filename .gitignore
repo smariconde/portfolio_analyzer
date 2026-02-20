@@ -1,14 +1,9 @@
 chart.png
 logo.png
 /charts
-cedears_selection.txt
 
-soja_brecha_final.png
-soja_precios_diario_2024.png
-chicago_data.csv
-all_sortino_ratios.csv
-
-# Sortino analysis outputs
+# Generated outputs
+outputs/
 Sortino_Analysis_Report_*.pdf
 
 # Cache directory for downloaded stock data

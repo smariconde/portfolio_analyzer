@@ -1,33 +1,34 @@
 import os
 import json
-import re
+import sys
 from datetime import datetime
-from typing import Dict, Any
+from pathlib import Path
+
 import streamlit as st
 
-from langchain_core.messages import HumanMessage
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+for path in (ROOT, SRC):
+    path_str = str(path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
+
+from ai_agent.env_loader import load_project_env
+from ai_agent.llm_utils import invoke_gemini
+
+load_project_env()
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
 
-from tools import get_financial_metrics, parse_output_to_json
+from ai_agent.tools import get_financial_metrics, parse_output_to_json
 
-if "GOOGLE_API_KEY" not in os.environ:
-    os.environ["GOOGLE_API_KEY"] = os.environ.get('GOOGLE_API_KEY')
-
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash-exp",
-    temperature=0,
-    max_tokens=None,
-    max_retries=6,
-    stop=None
-)
+api_key = os.environ.get("GOOGLE_API_KEY")
+if api_key:
+    os.environ["GOOGLE_API_KEY"] = api_key
 
 def valuation_agent(ticker: str):
     """Calculates the intrinsic value of a company using a 5-year DCF model."""
-
     metrics = get_financial_metrics(ticker=ticker)
 
-    # 1. Get necessary data from metrics
     ltm_revenue = metrics.get("totalRevenue") or 0
     shares_outstanding = metrics.get("sharesOutstanding") or 0
     current_price = metrics.get("currentPrice") or 0
@@ -39,11 +40,9 @@ def valuation_agent(ticker: str):
     sector = metrics.get("sector", "Not Found")
     logo = metrics.get("logo_url")
 
-    # Get year
     current_year = datetime.now().year
     target_year = current_year + 5
 
-    # 2. Estimate/Project Missing Metrics and Choose Valuation Method
     template = ChatPromptTemplate.from_messages(
         [
             (
@@ -54,13 +53,10 @@ def valuation_agent(ticker: str):
                     "revenue_cagr": <float>,
                     "profit_margin_{target_year}": <float>,
                     "shares_reduction_per_year": <float>,
-                    "discount_rate": <float from 0.1 to 0.15> (Depending on the risk. For example, companies from less trusty countries, higher rate),
+                    "discount_rate": <float from 0.1 to 0.15>,
                     "terminal_growth_rate": <float>,
-                    "valuation_method": <"PE_multiple" | "Gordon_Growth"> (Choose the best valuation method
-                    based on the company. Use "PE_multiple" for mature companies with stable profitability
-                     and "Gordon_Growth" for high-growth companies where profits are expected to grow into the future,
-                    and do not use "PE_multiple" if there is no data for P/E)
-                     Give me the JSON output only.
+                    "valuation_method": <"PE_multiple" | "Gordon_Growth">
+                    Give me the JSON output only.
                 """,
             ),
             (
@@ -69,7 +65,7 @@ def valuation_agent(ticker: str):
                     Company: {ticker}
                     Industry: {industry}
                     Sector: {sector}
-    
+
                     LTM Revenue: {ltm_revenue}
                     Shares Outstanding: {shares_outstanding}
                     Trailing P/E Ratio: {trailing_pe}
@@ -77,7 +73,7 @@ def valuation_agent(ticker: str):
                     Earnings Growth: {earnings_growth}
                     Current Profit Margin: {current_profit_margin}
 
-                   Only include the revenue_cagr, profit_margin_{target_year}, shares_reduction_per_year, discount_rate, terminal_growth_rate and valuation_method in your JSON output.
+                   Only include the required keys in JSON output.
                    Do not include any JSON markdown.
                 """,
             ),
@@ -99,7 +95,7 @@ def valuation_agent(ticker: str):
         }
     )
 
-    result = llm.invoke(prompt)
+    result, _ = invoke_gemini(prompt, temperature=0, max_tokens=None, max_retries=6, stop=None)
     try:
         estimation = parse_output_to_json(result.content)
     except json.JSONDecodeError as e:
@@ -113,8 +109,6 @@ def valuation_agent(ticker: str):
     valuation_method = estimation.get("valuation_method", "PE_multiple")
     pe_ratio_target_year = estimation.get(f"pe_ratio_{target_year}", 15)
 
-
-    # Project revenues and profits for next 5 years
     projected_revenues = []
     projected_profits = []
 
@@ -124,11 +118,8 @@ def valuation_agent(ticker: str):
         else:
             revenue = projected_revenues[-1] * (1 + revenue_cagr)
         projected_revenues.append(revenue)
+        projected_profits.append(revenue * profit_margin_target_year)
 
-        profit = revenue * profit_margin_target_year
-        projected_profits.append(profit)
-
-    # Calculate the terminal value in the 5th year
     if valuation_method == "Gordon_Growth":
         terminal_value = (projected_profits[-1] * (1 + terminal_growth_rate)) / (
             discount_rate - terminal_growth_rate
@@ -136,34 +127,25 @@ def valuation_agent(ticker: str):
     elif valuation_method == "PE_multiple":
         terminal_value = projected_profits[-1] * pe_ratio_target_year
     else:
-        terminal_value = 0  #Default value if method does not match
+        terminal_value = 0
 
-    # Calculate the present values for all the projected years and the terminal value
     present_values = []
     for year, profit in enumerate(projected_profits, 1):
-        discounted_value = profit / (1 + discount_rate) ** year
-        present_values.append(discounted_value)
+        present_values.append(profit / (1 + discount_rate) ** year)
 
     discounted_terminal_value = terminal_value / (1 + discount_rate) ** 5
-
-    # Calculate intrinsic value
     intrinsic_value = sum(present_values) + discounted_terminal_value
 
-    # Calculate intrinsic value per share considering reduction of shares
     shares_value = shares_outstanding * ((1 - shares_reduction_per_year) ** 5)
+    intrinsic_value_per_share = intrinsic_value / shares_value if shares_value else 0
 
-    intrinsic_value_per_share = intrinsic_value / shares_value
-
-    # Get recomendation mean
-    targetMeanPrice = metrics.get("targetMeanPrice", "Not Found")
-
-    # Compare the intrinsic value with the current price
-    undervalued = intrinsic_value_per_share > current_price
+    target_mean_price = metrics.get("targetMeanPrice", None)
+    undervalued = intrinsic_value_per_share > current_price if current_price else False
 
     message_content = {
         "intrinsic_value_per_share": round(intrinsic_value_per_share, 2),
         "current_price": current_price,
-        "targetMeanPrice": targetMeanPrice,
+        "targetMeanPrice": target_mean_price,
         "undervalued": undervalued,
         "valuation_method": valuation_method,
         "reasoning": {
@@ -180,39 +162,83 @@ def valuation_agent(ticker: str):
     return message_content, logo
 
 
-if __name__ == "__main__":
-    st.set_page_config(page_title="Valuation AI Agent", page_icon=":material/calculate:")
+@st.cache_data(ttl=21600)
+def load_valuation_cached(ticker: str):
+    return valuation_agent(ticker)
+
+
+if __name__ in {"__main__", "__page__"}:
     st.title("Valuation Agent :material/calculate:")
-    ticker = st.text_input("Enter Ticker", "AAPL", max_chars=5).upper()
+    st.caption("Estimate intrinsic value using a 5-year AI-assisted DCF workflow.")
+    st.info(
+        "Output is a scenario-based estimate, not investment advice. Validate assumptions before use.",
+        icon=":material/info:",
+    )
 
-    if st.button("Get Valuation", type="primary"):
-        with st.spinner("Calculating Valuation..."):
-            try:
-                message_content, logo = valuation_agent(ticker=ticker)
-                
-                st.divider()
-                col1, col2 = st.columns([1, 9], gap="small", vertical_alignment="center")
-                with col1:
-                     st.image(logo, width=100)
-                with col2:
-                    st.markdown(f"**[{ticker}](https://finviz.com/quote.ashx?t={ticker}&p=d)**")
-                
-                # Display metrics with conditional formatting
-                col1, col2, col3 = st.columns(3)
+    if not os.environ.get("GOOGLE_API_KEY"):
+        st.warning("`GOOGLE_API_KEY` is missing. Valuation requests will fail.")
+    if st.button("Refresh valuation cache", icon=":material/refresh:"):
+        st.cache_data.clear()
+        st.rerun()
 
-                with col1:
-                    if message_content["undervalued"]:
-                         st.metric(label="Intrinsic Value", value=f"${message_content['intrinsic_value_per_share']:.2f}", delta="Undervalued", delta_color="normal")
-                    else:
-                         st.metric(label="Intrinsic Value", value=f"${message_content['intrinsic_value_per_share']:.2f}", delta="Overvalued", delta_color="inverse")
+    with st.form("valuation_form"):
+        ticker = st.text_input("Ticker", "AAPL", max_chars=8).upper().strip()
+        submit = st.form_submit_button("Get Valuation", type="primary")
 
-                with col2:
-                    st.metric(label="Current Price", value=f"${message_content['current_price']:.2f}")
+    if submit:
+        if not ticker:
+            st.error("Enter a valid ticker.")
+        else:
+            with st.spinner("Calculating valuation..."):
+                try:
+                    message_content, logo = load_valuation_cached(ticker=ticker)
+                except Exception as exc:
+                    st.error(f"Valuation failed: {exc}")
+                    st.stop()
 
-                with col3:
-                    st.metric(label="Analyst Target", value=f"${message_content['targetMeanPrice']:.2f}")
+            st.divider()
+            col1, col2 = st.columns([1, 9], gap="small", vertical_alignment="center")
+            with col1:
+                if logo:
+                    st.image(logo, width=100)
+            with col2:
+                st.markdown(f"**[{ticker}](https://finviz.com/quote.ashx?t={ticker}&p=d)**")
 
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                delta_text = "Undervalued" if message_content["undervalued"] else "Overvalued"
+                delta_color = "normal" if message_content["undervalued"] else "inverse"
+                st.metric(
+                    label="Intrinsic Value",
+                    value=f"${message_content['intrinsic_value_per_share']:.2f}",
+                    delta=delta_text,
+                    delta_color=delta_color,
+                )
+            with c2:
+                current_price = message_content.get("current_price")
+                value = f"${float(current_price):.2f}" if isinstance(current_price, (int, float)) else "N/A"
+                st.metric(label="Current Price", value=value)
+            with c3:
+                target = message_content.get("targetMeanPrice")
+                value = f"${float(target):.2f}" if isinstance(target, (int, float)) else "N/A"
+                st.metric(label="Analyst Target", value=value)
+
+            current_price = message_content.get("current_price")
+            intrinsic = float(message_content["intrinsic_value_per_share"])
+            if isinstance(current_price, (int, float)) and current_price:
+                upside = ((intrinsic / float(current_price)) - 1) * 100
+                st.metric("Implied Upside vs Current", f"{upside:.2f}%")
+
+            tab1, tab2 = st.tabs(["Summary", "Raw JSON"])
+            with tab1:
+                st.write(
+                    {
+                        "valuation_method": message_content["valuation_method"],
+                        "undervalued": message_content["undervalued"],
+                        "intrinsic_value_per_share": message_content["intrinsic_value_per_share"],
+                        "current_price": message_content.get("current_price"),
+                        "targetMeanPrice": message_content.get("targetMeanPrice"),
+                    }
+                )
+            with tab2:
                 st.json(message_content)
-
-            except Exception as e:
-                st.error(f"An error occurred: {e}")

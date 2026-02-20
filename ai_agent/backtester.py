@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta
+import importlib
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from tools import get_price_data
-from ai_agent.pages.agents import run_hedge_fund
+from ai_agent.tools import get_price_data
 
 class Backtester:
     def __init__(self, agent, ticker, start_date, end_date, initial_capital):
@@ -129,6 +129,8 @@ class Backtester:
 ### 4. Run the Backtest #####
 if __name__ == "__main__":
     import argparse
+    portfolio_agent_module = importlib.import_module("ai_agent.pages.01_portfolio_agent")
+    run_hedge_fund = getattr(portfolio_agent_module, "run_hedge_fund")
     
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Run backtesting simulation')

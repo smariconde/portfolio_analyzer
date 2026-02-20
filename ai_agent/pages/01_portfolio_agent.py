@@ -1,28 +1,34 @@
 from typing import Annotated, Any, Dict, Sequence, TypedDict
 
 import operator, os, json, re, time, ast, math
+import sys
+from pathlib import Path
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
 
-from tools import calculate_bollinger_bands, calculate_macd, calculate_obv, calculate_rsi, get_price_data, prices_to_df, get_financial_metrics, format_metric, get_news, calculate_trend_signals, calculate_mean_reversion_signals, calculate_momentum_signals, calculate_volatility_signals, calculate_stat_arb_signals, weighted_signal_combination, normalize_pandas, parse_output_to_json
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+for path in (ROOT, SRC):
+    path_str = str(path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
+
+from ai_agent.tools import calculate_bollinger_bands, calculate_macd, calculate_obv, calculate_rsi, get_price_data, prices_to_df, get_financial_metrics, format_metric, get_news, calculate_trend_signals, calculate_mean_reversion_signals, calculate_momentum_signals, calculate_volatility_signals, calculate_stat_arb_signals, weighted_signal_combination, normalize_pandas, parse_output_to_json
+from ai_agent.llm_utils import invoke_gemini
 
 import streamlit as st
+
+from ai_agent.env_loader import load_project_env
+
+load_project_env()
 from datetime import datetime, timedelta
 
 
 
-if "GOOGLE_API_KEY" not in os.environ:
-    os.environ["GOOGLE_API_KEY"] = os.environ.get('GOOGLE_API_KEY')
-
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash-exp",
-    temperature=0.1,
-    max_tokens=None,
-    max_retries=6,
-    stop=None
-)
+api_key = os.environ.get("GOOGLE_API_KEY")
+if api_key:
+    os.environ["GOOGLE_API_KEY"] = api_key
 
 def merge_dicts(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
     return {**a, **b}
@@ -473,7 +479,7 @@ def valuation_agent(state: AgentState):
         }
     )
 
-    result = llm.invoke(prompt)
+    result, _ = invoke_gemini(prompt, temperature=0.1, max_tokens=None, max_retries=6, stop=None)
     try:
         estimation = parse_output_to_json(result.content)
     except json.JSONDecodeError as e:
@@ -840,7 +846,7 @@ def portfolio_management_agent(state: AgentState):
         }
     )
     # Invoke the LLM
-    result = llm.invoke(prompt)
+    result, _ = invoke_gemini(prompt, temperature=0.1, max_tokens=None, max_retries=6, stop=None)
 
     # Create the portfolio management message
     message = HumanMessage(
@@ -928,130 +934,130 @@ workflow.add_edge("portfolio_management_agent", END)
 app = workflow.compile()
 
 # Add this at the bottom of the file
-if __name__ == "__main__":
-    st.set_page_config(page_title="Portfolio AI Agents Analysis", page_icon=":material/finance_mode:")
+if __name__ in {"__main__", "__page__"}:
     st.title("Portfolio AI Agents Analysis :material/finance_mode:")
+    st.caption("Build your portfolio mix, then run multi-agent analysis per ticker.")
 
-    # Create input fields for user inputs
-    if 'portfolio' not in st.session_state:
+    if "portfolio" not in st.session_state:
         st.session_state.portfolio = {}
-    
-    left, middle, right = st.columns([4, 4, 2], gap="large", vertical_alignment="center")
 
-    with left:
-        ticker_input = st.text_input("Enter Ticker", max_chars=5)
-    with middle:
-        percentage_input = st.slider("Enter Percentage", 0.0, 100.0, 0.0, 1.0) / 100
-    with right:
-        add_button = st.button("Add Ticker")
+    if not os.environ.get("GOOGLE_API_KEY"):
+        st.warning("`GOOGLE_API_KEY` is missing. Analysis will fail until it is configured.")
 
-        # Handle adding ticker
-    if add_button:
-        if ticker_input:
-            # Validate ticker (you can add more robust validation)
-            if len(ticker_input) > 0:
-                st.session_state.portfolio[ticker_input] = percentage_input
-                
-                # Clear the input fields
-                st.session_state["ticker_input"] = ""
-                st.session_state["percentage_input"] = 100.0
-                
+    with st.form("portfolio_builder", clear_on_submit=True):
+        left, middle, right = st.columns([4, 4, 2], gap="large", vertical_alignment="bottom")
+        with left:
+            ticker_input = st.text_input("Ticker", max_chars=8, placeholder="AAPL").upper().strip()
+        with middle:
+            percentage_input = st.slider("Allocation (%)", 0.0, 100.0, 10.0, 1.0)
+        with right:
+            add_ticker = st.form_submit_button("Add")
+
+        if add_ticker:
+            if not ticker_input:
+                st.warning("Enter a ticker before adding.")
+            else:
+                st.session_state.portfolio[ticker_input] = percentage_input / 100.0
+                st.success(f"Added/updated `{ticker_input}` at {percentage_input:.1f}%.")
+
+    manage_col1, manage_col2 = st.columns([3, 1], gap="large")
+    with manage_col1:
+        if st.session_state.portfolio:
+            ticker_to_remove = st.selectbox("Remove ticker", options=list(st.session_state.portfolio.keys()))
+            if st.button("Remove selected", use_container_width=True):
+                st.session_state.portfolio.pop(ticker_to_remove, None)
                 st.rerun()
         else:
-            st.warning("Please enter both ticker and percentage")
+            st.info("No tickers added yet.")
+    with manage_col2:
+        if st.button("Clear portfolio", use_container_width=True):
+            st.session_state.portfolio = {}
+            st.rerun()
 
-    # Display current portfolio in a more visual way
+    total_percentage = 0.0
     if st.session_state.portfolio:
-        st.subheader("Current Portfolio")
-        
-        # Create a table to display the portfolio
         portfolio_data = []
-        total_percentage = 0
-        
         for ticker, percentage in st.session_state.portfolio.items():
-            portfolio_data.append({
-                "Ticker": ticker,
-                "Percentage": float(percentage * 100)
-            })
-            total_percentage += (percentage * 100)
-        
-        # Display the portfolio as a table
-        st.table(portfolio_data)
-        
-        # Add a total percentage check
-        st.write(f"Total Portfolio Percentage: {total_percentage:.2f}%")
-        
-        # Optional: Add a warning if total percentage exceeds 100%
+            pct = float(percentage * 100)
+            total_percentage += pct
+            portfolio_data.append({"Ticker": ticker, "Allocation (%)": pct})
+        st.subheader("Current Portfolio")
+        st.dataframe(portfolio_data, use_container_width=True, hide_index=True)
+        st.metric("Total Allocation", f"{total_percentage:.2f}%")
         if total_percentage > 100:
-            st.warning("Warning: Total portfolio percentage exceeds 100%")
-    else:
-        st.write("No tickers added yet")
-    
-    cash = st.number_input("Cash available", value=5000)
-    invested = st.number_input("Invested amount in portfolio", value=20000)
+            st.error("Total allocation is above 100%. Reduce weights before running analysis.")
 
-    st.session_state.portfolio_details = {}
-    for ticker, value in st.session_state.portfolio.items():
-        st.session_state.portfolio_details[ticker] = {"cash": cash, "stock": value, "invested": invested}
-
-    start_date = st.date_input(f'Start Date', value=datetime.now() - timedelta(days=365))
-    end_date = st.date_input(f'End Date', value=datetime.now())
-    show_reasoning = st.checkbox(f'Show Reasoning from Each Agent')
-
-    # Convert dates to string format for validation
-    start_date_str = start_date.strftime('%Y-%m-%d') if start_date else None
-    end_date_str = end_date.strftime('%Y-%m-%d') if end_date else None
-
-    # Validate dates if provided
-    if start_date_str:
-        try:
-            datetime.strptime(start_date_str, '%Y-%m-%d')
-        except ValueError:
-            st.error(f"Start date must be in YYYY-MM-DD format")
-    
-    if end_date_str:
-        try:
-            datetime.strptime(end_date_str, '%Y-%m-%d')
-        except ValueError:
-            st.error(f"End date must be in YYYY-MM-DD format")
-    
-    # Button to run the hedge fund
-    if st.button('Run Agents Analysis', type="primary"):            
-        for ticker, details in st.session_state.portfolio_details.items():
-            result, logo_url, agent_reasoning = run_hedge_fund(
-                ticker=ticker,
-                start_date=start_date_str,
-                end_date=end_date_str,
-                portfolio=details,
-                show_reasoning=show_reasoning
+    with st.expander("Analysis settings", expanded=True):
+        left, middle, right = st.columns(3)
+        with left:
+            cash = st.number_input("Cash available (USD)", min_value=0.0, value=5000.0, step=500.0)
+        with middle:
+            invested = st.number_input(
+                "Current invested value (USD)", min_value=0.0, value=20000.0, step=1000.0
             )
+        with right:
+            show_reasoning = st.checkbox("Show reasoning from each agent", value=False)
+        col_start, col_end = st.columns(2)
+        with col_start:
+            start_date = st.date_input("Start Date", value=datetime.now() - timedelta(days=365))
+        with col_end:
+            end_date = st.date_input("End Date", value=datetime.now())
 
-            # Remove occurrences of '''json from the result and clean up
-            cleaned_result = re.sub(r"\s*```json\s*", '', result).strip()
-            cleaned_result = re.sub(r"\```", '"', cleaned_result)  # Replace single quotes with double quotes
-            cleaned_result = re.sub(r'\s+', ' ', cleaned_result)  # Replace multiple spaces with a single space
-            json_match = re.search(r'(\{.*\})', cleaned_result) 
+    if start_date > end_date:
+        st.error("Start date must be earlier than end date.")
 
-            # Check if cleaned_result is not empty and is valid JSON
-            if json_match:
-                try:
-                    col1, col2 = st.columns([1, 9], gap="small", vertical_alignment="center")
-                    with col1:
-                        st.image(logo_url, width=100)
-                    with col2:
-                        st.markdown(f"**[{ticker}](https://finviz.com/quote.ashx?t={ticker}&p=d)**")
-                    json_result = json.loads(json_match.group(1))  # Parse the result
-                    st.json(json_result)  # Display the JSON result
-                    
-                    if show_reasoning:
-                      st.subheader("Agent Reasonings")
-                      for agent, reasoning in agent_reasoning.items():
-                            st.markdown(f"\n#### {agent.replace('_', ' ').title().center(28)}")
-                            st.json(reasoning)
+    run_disabled = (
+        not os.environ.get("GOOGLE_API_KEY")
+        or not st.session_state.portfolio
+        or total_percentage <= 0
+        or total_percentage > 100
+        or start_date > end_date
+    )
 
-                except json.JSONDecodeError:
-                    st.error("The AI agent returned an invalid JSON response.")
-            else:
-                st.error("The AI agent returned an empty response.")
+    if st.button("Run Agents Analysis", type="primary", disabled=run_disabled):
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        end_date_str = end_date.strftime("%Y-%m-%d")
+        items = list(st.session_state.portfolio.items())
+        progress = st.progress(0, text="Starting analysis...")
 
-            time.sleep(8)
+        success_count = 0
+        error_count = 0
+
+        for idx, (ticker, weight) in enumerate(items, start=1):
+            details = {"cash": cash, "stock": weight, "invested": invested}
+            progress.progress(int((idx - 1) / len(items) * 100), text=f"Analyzing {ticker}...")
+
+            try:
+                result, logo_url, agent_reasoning = run_hedge_fund(
+                    ticker=ticker,
+                    start_date=start_date_str,
+                    end_date=end_date_str,
+                    portfolio=details,
+                    show_reasoning=show_reasoning,
+                )
+            except Exception as exc:
+                st.error(f"Error running agent for {ticker}: {exc}")
+                error_count += 1
+                continue
+
+            parsed = parse_output_to_json(result)
+            success_count += 1
+            with st.expander(f"{ticker} analysis", expanded=True):
+                col1, col2 = st.columns([1, 9], gap="small", vertical_alignment="center")
+                with col1:
+                    if logo_url:
+                        st.image(logo_url, width=90)
+                with col2:
+                    st.markdown(f"**[{ticker}](https://finviz.com/quote.ashx?t={ticker}&p=d)**")
+                st.json(parsed)
+
+                if show_reasoning:
+                    st.markdown("#### Agent Reasonings")
+                    for agent, reasoning in agent_reasoning.items():
+                        st.markdown(f"**{agent.replace('_', ' ').title()}**")
+                        st.json(reasoning)
+
+        progress.progress(100, text="Analysis completed.")
+        st.success(f"Completed: {success_count} ticker(s) analyzed.")
+        if error_count:
+            st.warning(f"{error_count} ticker(s) failed during execution.")

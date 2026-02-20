@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import os
 # Asegúrate de que 'bcra' esté disponible, si no, necesitarás instalarla o usar una alternativa.
 try:
-    from bcra import get_minorista_exchange_rate
+    from scripts.bcra import get_minorista_exchange_rate
 except ImportError:
     print("Advertencia: No se pudo importar 'bcra.get_minorista_exchange_rate'. Asumiendo que el tipo de cambio se manejará con una fuente alternativa o se llenará con NaNs.")
     # Función dummy en caso de que 'bcra' no esté disponible
@@ -16,7 +16,7 @@ except ImportError:
         return None 
 
 # --- Caching para yfinance ---
-CHICAGO_CACHE_FILE = 'chicago_data.csv' # Nuevo nombre de caché para datos diarios
+CHICAGO_CACHE_FILE = 'cache/chicago_data.csv' # Nuevo nombre de caché para datos diarios
 CACHE_DURATION_DAYS = 1
 
 def get_chicago_data(cache_file=CHICAGO_CACHE_FILE, cache_days=CACHE_DURATION_DAYS):

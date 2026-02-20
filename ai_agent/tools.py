@@ -6,6 +6,10 @@ import yfinance as yf
 from tavily import TavilyClient
 from typing import Dict
 
+from ai_agent.env_loader import load_project_env
+
+load_project_env()
+
 def parse_output_to_json(output):
     """Parses a string or object into a JSON dictionary."""
     if isinstance(output, (dict, list)):
