@@ -93,7 +93,7 @@ def get_bcra_series(
     )
 
 
-def _month_to_number(value: str) -> int | None:
+def _month_to_number(value: object) -> int | None:
     mapping = {
         "enero": 1,
         "febrero": 2,
@@ -120,9 +120,26 @@ def _month_to_number(value: str) -> int | None:
         "nov": 11,
         "dic": 12,
     }
-    if not isinstance(value, str):
+    if value is None:
         return None
-    return mapping.get(value.strip().lower())
+    normalized = _normalize_text(value)
+    if not normalized:
+        return None
+
+    for token in normalized.split():
+        if token in mapping:
+            return mapping[token]
+        short = token[:3]
+        if short in mapping:
+            return mapping[short]
+
+    if re.fullmatch(r"(1[0-2]|0?[1-9])", normalized):
+        return int(normalized)
+    numeric_match = re.search(r"\bmes\s+(1[0-2]|0?[1-9])\b", normalized)
+    if numeric_match:
+        return int(numeric_match.group(1))
+
+    return None
 
 
 def _normalize_text(value: object) -> str:
@@ -170,9 +187,96 @@ def _pick_column(columns: list[str], include: tuple[str, ...], exclude: tuple[st
     return None
 
 
+def _pick_columns(columns: list[str], include: tuple[str, ...], exclude: tuple[str, ...] = ()) -> list[str]:
+    picked: list[str] = []
+    for col in columns:
+        norm = _normalize_text(col)
+        if any(token in norm for token in include) and not any(token in norm for token in exclude):
+            picked.append(col)
+    return picked
+
+
+def _column_context_tokens(name: str) -> set[str]:
+    tokens = set(_normalize_text(name).split())
+    stopwords = {
+        "exportaciones",
+        "exportacion",
+        "importaciones",
+        "importacion",
+        "periodo",
+        "mes",
+        "fecha",
+        "saldo",
+        "balanza",
+        "total",
+        "mensual",
+        "fob",
+        "cif",
+        "usd",
+        "millones",
+    }
+    return {token for token in tokens if token not in stopwords}
+
+
+def _column_compatibility_score(
+    export_col: str,
+    import_col: str,
+    first_date_col: str,
+    second_date_col: str | None,
+) -> int:
+    metric_tokens = _column_context_tokens(export_col) & _column_context_tokens(import_col)
+    if second_date_col is not None:
+        date_tokens = _column_context_tokens(first_date_col) & _column_context_tokens(second_date_col)
+    else:
+        date_tokens = _column_context_tokens(first_date_col)
+
+    if metric_tokens == date_tokens:
+        return 2
+    if not metric_tokens and not date_tokens:
+        return 2
+    if metric_tokens & date_tokens:
+        return 1
+    return 0
+
+
+def _is_year_like_series(series: pd.Series) -> bool:
+    cleaned = (
+        series.ffill()
+        .astype(str)
+        .str.extract(r"(19\d{2}|20\d{2}|21\d{2})", expand=False)
+    )
+    ratio = cleaned.notna().mean()
+    return bool(ratio >= 0.4)
+
+
+def _is_month_like_series(series: pd.Series) -> bool:
+    parsed = _extract_month(series)
+    ratio = parsed.notna().mean()
+    return bool(ratio >= 0.4)
+
+
+def _augment_date_columns_from_content(
+    df: pd.DataFrame,
+    year_cols: list[str],
+    month_cols: list[str],
+) -> tuple[list[str], list[str]]:
+    years = list(year_cols)
+    months = list(month_cols)
+    for col in df.columns:
+        col_name = str(col)
+        if col_name not in years and _is_year_like_series(df[col]):
+            years.append(col_name)
+        if col_name not in months and _is_month_like_series(df[col]):
+            months.append(col_name)
+    return years, months
+
+
 def _extract_month(series: pd.Series) -> pd.Series:
     month_from_name = series.astype(str).apply(_month_to_number)
-    month_from_num = pd.to_numeric(series, errors="coerce")
+    month_from_num = pd.to_numeric(
+        series.astype(str).str.extract(r"^\s*(1[0-2]|0?[1-9])\s*$", expand=False),
+        errors="coerce",
+    )
     month = month_from_name.where(month_from_name.notna(), month_from_num)
     return pd.to_numeric(month, errors="coerce")
 
@@ -184,56 +288,113 @@ def _parse_indec_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     columns = list(df.columns)
-    export_col = _pick_column(columns, include=("export",), exclude=("acumul",))
-    import_col = _pick_column(columns, include=("import",), exclude=("acumul",))
-    balance_col = _pick_column(columns, include=("saldo", "balanza"))
-    year_col = _pick_column(columns, include=("periodo", "ano", "anio", "año"), exclude=("mes",))
-    month_col = _pick_column(columns, include=("mes",))
-    date_col = _pick_column(columns, include=("fecha",))
+    export_cols = _pick_columns(
+        columns,
+        include=("export",),
+        exclude=("acumul", "variac", "indice", "precio", "interan"),
+    )
+    import_cols = _pick_columns(
+        columns,
+        include=("import",),
+        exclude=("acumul", "variac", "indice", "precio", "interan"),
+    )
+    balance_cols = _pick_columns(columns, include=("saldo", "balanza"))
+    year_cols = _pick_columns(columns, include=("periodo", "ano", "anio", "año"), exclude=("mes",))
+    month_cols = _pick_columns(columns, include=("mes",))
+    date_cols = _pick_columns(columns, include=("fecha",))
+    year_cols, month_cols = _augment_date_columns_from_content(df, year_cols, month_cols)
 
-    if not export_col or not import_col:
+    if not export_cols or not import_cols:
         return pd.DataFrame()
 
-    parsed = pd.DataFrame()
-    parsed["Exportaciones"] = _to_numeric_series(df[export_col])
-    parsed["Importaciones"] = _to_numeric_series(df[import_col])
+    best_candidate = pd.DataFrame()
+    best_score: tuple[pd.Timestamp, int, int] = (pd.Timestamp.min, -1, 0)
+    date_pairs: list[tuple[str, str | None]] = []
+    for year_col in year_cols:
+        for month_col in month_cols:
+            date_pairs.append((year_col, month_col))
+    for date_col in date_cols:
+        date_pairs.append((date_col, None))
+    for year_col in year_cols:
+        date_pairs.append((year_col, None))
 
-    if balance_col:
-        parsed["Balanza Comercial"] = _to_numeric_series(df[balance_col])
-    else:
-        parsed["Balanza Comercial"] = parsed["Exportaciones"] - parsed["Importaciones"]
-
-    if date_col:
-        parsed["Fecha"] = pd.to_datetime(df[date_col], errors="coerce", dayfirst=True)
-    elif year_col and month_col:
-        years = (
-            df[year_col]
-            .ffill()
-            .astype(str)
-            .str.extract(r"(\d{4})", expand=False)
-            .astype(float)
-        )
-        months = _extract_month(df[month_col])
-        parsed["Fecha"] = pd.to_datetime(
-            years.fillna(0).astype(int).astype(str)
-            + "-"
-            + months.fillna(0).astype(int).astype(str)
-            + "-01",
-            errors="coerce",
-        )
-    elif year_col:
-        # Sometimes period already contains month + year in one field.
-        parsed["Fecha"] = pd.to_datetime(df[year_col], errors="coerce", dayfirst=True)
-    else:
+    if not date_pairs:
         return pd.DataFrame()
 
-    parsed = parsed.dropna(subset=["Fecha", "Exportaciones", "Importaciones"]).copy()
-    if parsed.empty:
-        return parsed
+    for export_col in export_cols:
+        for import_col in import_cols:
+            if export_col == import_col:
+                continue
+            export_tokens = _column_context_tokens(export_col)
+            import_tokens = _column_context_tokens(import_col)
+            if export_tokens != import_tokens and (export_tokens or import_tokens):
+                continue
+            base = pd.DataFrame()
+            base["Exportaciones"] = _to_numeric_series(df[export_col])
+            base["Importaciones"] = _to_numeric_series(df[import_col])
 
-    parsed = parsed.sort_values("Fecha").set_index("Fecha")
-    parsed = parsed[["Exportaciones", "Importaciones", "Balanza Comercial"]]
-    return parsed
+            balance_col = None
+            for candidate in balance_cols:
+                norm_candidate = _normalize_text(candidate)
+                # Prefer monthly balance-like columns when available.
+                if "mensual" in norm_candidate:
+                    balance_col = candidate
+                    break
+            if balance_col is None and balance_cols:
+                balance_col = balance_cols[0]
+
+            if balance_col:
+                base["Balanza Comercial"] = _to_numeric_series(df[balance_col])
+            else:
+                base["Balanza Comercial"] = base["Exportaciones"] - base["Importaciones"]
+
+            for first_col, second_col in date_pairs:
+                parsed = base.copy()
+                if second_col is not None:
+                    years = (
+                        df[first_col]
+                        .ffill()
+                        .astype(str)
+                        .str.extract(r"(\d{4})", expand=False)
+                        .astype(float)
+                    )
+                    months = _extract_month(df[second_col])
+                    parsed["Fecha"] = pd.to_datetime(
+                        years.fillna(0).astype(int).astype(str)
+                        + "-"
+                        + months.fillna(0).astype(int).astype(str)
+                        + "-01",
+                        errors="coerce",
+                    )
+                elif "fecha" in _normalize_text(first_col):
+                    parsed["Fecha"] = pd.to_datetime(df[first_col], errors="coerce", dayfirst=True)
+                else:
+                    parsed["Fecha"] = pd.to_datetime(df[first_col], errors="coerce", dayfirst=True)
+
+                parsed = parsed.dropna(subset=["Fecha", "Exportaciones", "Importaciones"]).copy()
+                parsed = parsed[
+                    (parsed["Fecha"].dt.year >= 1990)
+                    & (parsed["Fecha"].dt.year <= pd.Timestamp.now().year + 1)
+                ].copy()
+                if parsed.empty:
+                    continue
+
+                parsed = parsed.drop_duplicates(subset=["Fecha"], keep="last")
+                parsed = parsed.sort_values("Fecha").set_index("Fecha")
+                parsed = parsed[["Exportaciones", "Importaciones", "Balanza Comercial"]]
+                compatibility = _column_compatibility_score(export_col, import_col, first_col, second_col)
+                score = (parsed.index.max(), compatibility, len(parsed))
+                if score > best_score:
+                    best_candidate = parsed
+                    best_score = score
+
+    return best_candidate
+
+
+def _score_indec_candidate(df: pd.DataFrame) -> tuple[pd.Timestamp, int]:
+    if df.empty:
+        return (pd.Timestamp.min, 0)
+    return (df.index.max(), len(df))
 
 
 def get_indec_trade_balance() -> INDECTradeResult:
@@ -254,6 +415,8 @@ def get_indec_trade_balance() -> INDECTradeResult:
     header_candidates: list[object] = [[2, 3], [1, 2], [3, 4], 2, 1, 0, None]
     sheet_candidates: list[object] = ["FOB-CIF", 0]
     last_error: Exception | None = None
+    best_candidate: pd.DataFrame | None = None
+    best_score: tuple[pd.Timestamp, int] = (pd.Timestamp.min, 0)
 
     for sheet in sheet_candidates:
         for header in header_candidates:
@@ -266,10 +429,16 @@ def get_indec_trade_balance() -> INDECTradeResult:
                 )
                 parsed = _parse_indec_dataframe(df_raw)
                 if not parsed.empty:
-                    return INDECTradeResult(dataframe=parsed, source_url=INDEC_EXCEL_URL)
+                    score = _score_indec_candidate(parsed)
+                    if score > best_score:
+                        best_candidate = parsed
+                        best_score = score
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 continue
+
+    if best_candidate is not None:
+        return INDECTradeResult(dataframe=best_candidate, source_url=INDEC_EXCEL_URL)
 
     raise RuntimeError(
         "INDEC file format changed and could not be parsed with known layouts. "

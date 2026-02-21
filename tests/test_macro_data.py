@@ -9,6 +9,8 @@ def test_month_to_number_known_values() -> None:
     assert macro._month_to_number("enero") == 1
     assert macro._month_to_number("sep") == 9
     assert macro._month_to_number("DICIEMBRE") == 12
+    assert macro._month_to_number("Octubre*") == 10
+    assert macro._month_to_number("Mes 11") == 11
 
 
 def test_records_to_df_sorts_and_sets_datetime_index() -> None:
@@ -75,7 +77,100 @@ def test_parse_indec_dataframe_from_fecha_column() -> None:
     assert float(parsed.iloc[0]["Balanza Comercial"]) == 300.0
 
 
+def test_parse_indec_dataframe_prefers_period_month_over_fecha() -> None:
+    raw = pd.DataFrame(
+        {
+            "Periodo": [2025, 2025],
+            "Mes": ["enero*", "febrero*"],
+            "Fecha": ["2022-01-01", "2022-02-01"],
+            "Exportaciones": [1500, 1600],
+            "Importaciones": [1200, 1300],
+        }
+    )
+    parsed = macro._parse_indec_dataframe(raw)
+    assert not parsed.empty
+    assert list(parsed.index.strftime("%Y-%m-%d")) == ["2025-01-01", "2025-02-01"]
+
+
+def test_parse_indec_dataframe_picks_most_recent_between_column_combinations() -> None:
+    raw = pd.DataFrame(
+        {
+            "Periodo viejo": [2022, 2022, 2022],
+            "Mes viejo": ["enero", "febrero", "marzo"],
+            "Exportaciones viejo": [100, 101, 102],
+            "Importaciones viejo": [90, 91, 92],
+            "Periodo": [2025, 2025, 2025],
+            "Mes": ["enero", "febrero", "marzo"],
+            "Exportaciones": [200, 201, 202],
+            "Importaciones": [180, 181, 182],
+        }
+    )
+    parsed = macro._parse_indec_dataframe(raw)
+    assert not parsed.empty
+    assert parsed.index.max() == pd.Timestamp("2025-03-01")
+    assert float(parsed.iloc[-1]["Exportaciones"]) == 202.0
+
+
+def test_parse_indec_dataframe_detects_year_month_columns_by_content() -> None:
+    raw = pd.DataFrame(
+        {
+            "Unnamed: 0": [2025, None, None],
+            "Unnamed: 1": ["enero*", "febrero*", "marzo*"],
+            "Exportaciones Total mensual": ["1.100,0", "1.200,0", "1.300,0"],
+            "Importaciones Total mensual": ["1.000,0", "1.050,0", "1.100,0"],
+        }
+    )
+    parsed = macro._parse_indec_dataframe(raw)
+    assert not parsed.empty
+    assert list(parsed.index.strftime("%Y-%m-%d")) == ["2025-01-01", "2025-02-01", "2025-03-01"]
+    assert float(parsed.iloc[-1]["Balanza Comercial"]) == 200.0
+
+
 def test_parse_indec_dataframe_returns_empty_if_key_columns_missing() -> None:
     raw = pd.DataFrame({"Foo": [1, 2], "Bar": [3, 4]})
     parsed = macro._parse_indec_dataframe(raw)
     assert parsed.empty
+
+
+def test_get_indec_trade_balance_selects_most_recent_candidate(monkeypatch) -> None:
+    class DummyResponse:
+        content = b"xls-bytes"
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    monkeypatch.setattr(macro.requests, "get", lambda url, timeout=30: DummyResponse())
+
+    def fake_read_excel(*args, **kwargs):
+        return pd.DataFrame({"dummy": [1]})
+
+    monkeypatch.setattr(macro.pd, "read_excel", fake_read_excel)
+
+    candidates = [
+        pd.DataFrame(
+            {
+                "Exportaciones": [100.0],
+                "Importaciones": [90.0],
+                "Balanza Comercial": [10.0],
+            },
+            index=pd.to_datetime(["2022-12-01"]),
+        ),
+        pd.DataFrame(
+            {
+                "Exportaciones": [120.0, 130.0],
+                "Importaciones": [100.0, 110.0],
+                "Balanza Comercial": [20.0, 20.0],
+            },
+            index=pd.to_datetime(["2025-01-01", "2025-02-01"]),
+        ),
+    ]
+
+    def fake_parse(_raw):
+        if candidates:
+            return candidates.pop(0)
+        return pd.DataFrame()
+
+    monkeypatch.setattr(macro, "_parse_indec_dataframe", fake_parse)
+    result = macro.get_indec_trade_balance()
+    assert result.dataframe.index.max() == pd.Timestamp("2025-02-01")
