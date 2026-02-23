@@ -964,13 +964,13 @@ if __name__ in {"__main__", "__page__"}:
     with manage_col1:
         if st.session_state.portfolio:
             ticker_to_remove = st.selectbox("Remove ticker", options=list(st.session_state.portfolio.keys()))
-            if st.button("Remove selected", use_container_width=True):
+            if st.button("Remove selected", width="stretch"):
                 st.session_state.portfolio.pop(ticker_to_remove, None)
                 st.rerun()
         else:
             st.info("No tickers added yet.")
     with manage_col2:
-        if st.button("Clear portfolio", use_container_width=True):
+        if st.button("Clear portfolio", width="stretch"):
             st.session_state.portfolio = {}
             st.rerun()
 
@@ -982,7 +982,7 @@ if __name__ in {"__main__", "__page__"}:
             total_percentage += pct
             portfolio_data.append({"Ticker": ticker, "Allocation (%)": pct})
         st.subheader("Current Portfolio")
-        st.dataframe(portfolio_data, use_container_width=True, hide_index=True)
+        st.dataframe(portfolio_data, width="stretch", hide_index=True)
         st.metric("Total Allocation", f"{total_percentage:.2f}%")
         if total_percentage > 100:
             st.error("Total allocation is above 100%. Reduce weights before running analysis.")

@@ -87,7 +87,7 @@ def main() -> None:
     if "investment" in table.columns:
         table["investment"] = pd.to_numeric(table["investment"], errors="coerce")
     table = table.sort_values(by="investment", ascending=False, na_position="last")
-    st.dataframe(table, use_container_width=True)
+    st.dataframe(table, width="stretch")
 
     total_invested = float(result.weights["investment"].sum())
     total_cash = portfolio_size - total_invested

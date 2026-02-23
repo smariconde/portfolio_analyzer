@@ -141,7 +141,7 @@ else:
                 ranked_cedears[
                     ["Ticker", "Sector", "2 Years", "5 Years", "score_min", "Last Price", "Last Date"]
                 ].head(state["top_global"]),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -155,7 +155,7 @@ else:
                     st.caption(
                         f"{row['Sector']} | 2Y: {row['2 Years']:.2f} | 5Y: {row['5 Years']:.2f}"
                     )
-                    st.image(_finviz_chart_url(ticker), use_container_width=True)
+                    st.image(_finviz_chart_url(ticker), width="stretch")
                     st.markdown(f"[Finviz quote](https://finviz.com/quote.ashx?t={ticker}&p=d)")
 
     with tab2:
@@ -165,7 +165,7 @@ else:
             ranked_global[
                 ["Ticker", "Sector", "2 Years", "5 Years", "score_min", "score_avg", "Last Price", "Last Date"]
             ].head(state["top_global"]),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 

@@ -123,7 +123,7 @@ if submit:
                 st.stop()
             st.metric("Observaciones comparables", int(len(merged)))
             st.line_chart(merged)
-            st.dataframe(merged.tail(preview_rows), use_container_width=True)
+            st.dataframe(merged.tail(preview_rows), width="stretch")
             st.download_button(
                 "Descargar CSV (comparacion)",
                 data=merged.to_csv(index=True).encode("utf-8"),
@@ -140,7 +140,7 @@ if submit:
             col1, col2 = st.columns(2)
             col1.metric("Ultimo valor", f"{latest:,.4f}")
             col2.metric("Cambio ultimo dato", f"{delta_pct:.2f}%")
-            st.dataframe(primary.dataframe.tail(preview_rows), use_container_width=True)
+            st.dataframe(primary.dataframe.tail(preview_rows), width="stretch")
             st.download_button(
                 "Descargar CSV",
                 data=primary.dataframe.to_csv(index=True).encode("utf-8"),

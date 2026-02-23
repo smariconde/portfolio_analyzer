@@ -360,10 +360,11 @@ def _parse_indec_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
                     )
                     months = _extract_month(df[second_col])
                     parsed["Fecha"] = pd.to_datetime(
-                        years.fillna(0).astype(int).astype(str)
+                        years.fillna(0).astype(int).astype(str).str.zfill(4)
                         + "-"
-                        + months.fillna(0).astype(int).astype(str)
+                        + months.fillna(0).astype(int).astype(str).str.zfill(2)
                         + "-01",
+                        format="%Y-%m-%d",
                         errors="coerce",
                     )
                 elif "fecha" in _normalize_text(first_col):

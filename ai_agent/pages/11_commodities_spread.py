@@ -61,7 +61,7 @@ if submit:
     st.line_chart(result.dataframe[["Chicago_USD_ton", "Rosario_USD_ton"]])
     st.subheader("Spread %")
     st.line_chart(result.dataframe[["Spread_Pct"]])
-    st.dataframe(result.dataframe.tail(rows), use_container_width=True)
+    st.dataframe(result.dataframe.tail(rows), width="stretch")
 
     csv_data = result.dataframe.to_csv(index=True).encode("utf-8")
     st.download_button(

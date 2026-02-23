@@ -130,7 +130,7 @@ if result is not None:
         )
         .properties(height=320)
     )
-    st.altair_chart(trade_chart, use_container_width=True)
+    st.altair_chart(trade_chart, width="stretch")
 
     st.subheader("Balanza Comercial (mensual)")
     chart_df["balance_color"] = chart_df["Balanza Comercial"].apply(
@@ -155,7 +155,7 @@ if result is not None:
         .properties(height=320)
     )
     zero_line = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#6B7280", strokeDash=[6, 4]).encode(y="y:Q")
-    st.altair_chart(balance_chart + zero_line, use_container_width=True)
+    st.altair_chart(balance_chart + zero_line, width="stretch")
 
     st.subheader("Tendencia Balanza (promedio 3 meses)")
     rolling_3_visible = rolling_3.tail(months_to_show).reset_index()
@@ -173,8 +173,8 @@ if result is not None:
         )
         .properties(height=260)
     )
-    st.altair_chart(trend_chart, use_container_width=True)
-    st.dataframe(visible, use_container_width=True)
+    st.altair_chart(trend_chart, width="stretch")
+    st.dataframe(visible, width="stretch")
     st.download_button(
         "Descargar CSV INDEC",
         data=result.dataframe.to_csv(index=True).encode("utf-8"),
