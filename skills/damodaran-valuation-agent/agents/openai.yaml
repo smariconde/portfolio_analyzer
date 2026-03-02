@@ -1,0 +1,4 @@
+interface:
+  display_name: "Damodaran Valuation Agent"
+  short_description: "Builds intrinsic-value agents by asset type."
+  default_prompt: "Design or improve valuation agents using Damodaran-style intrinsic valuation and method selection by asset type."

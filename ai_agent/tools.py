@@ -7,6 +7,7 @@ from tavily import TavilyClient
 from typing import Dict
 
 from ai_agent.env_loader import load_project_env
+from ai_agent.ui_helpers import build_logo_url
 
 load_project_env()
 
@@ -139,6 +140,7 @@ def get_financial_metrics(ticker):
     """
     stock = yf.Ticker(ticker)
     info = stock.info  # Información financiera general
+    logo_url = build_logo_url(info.get("website"))
     
     try:
         financial_metrics = {
@@ -161,7 +163,7 @@ def get_financial_metrics(ticker):
             "industry": info.get("industry"),
             "sector": info.get("sector"),
             "targetMeanPrice": info.get("targetMeanPrice"),
-            "logo_url": f"https://logo.clearbit.com/{info.get('website', '').replace('http://', '').replace('https://', '').split('/')[0]}"
+            "logo_url": logo_url,
         }
     except KeyError as e:
         raise ValueError(f"Error fetching data for {ticker}: {e}")

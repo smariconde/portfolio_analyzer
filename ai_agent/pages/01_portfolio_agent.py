@@ -16,6 +16,7 @@ for path in (ROOT, SRC):
 
 from ai_agent.tools import calculate_bollinger_bands, calculate_macd, calculate_obv, calculate_rsi, get_price_data, prices_to_df, get_financial_metrics, format_metric, get_news, calculate_trend_signals, calculate_mean_reversion_signals, calculate_momentum_signals, calculate_volatility_signals, calculate_stat_arb_signals, weighted_signal_combination, normalize_pandas, parse_output_to_json
 from ai_agent.llm_utils import invoke_gemini
+from ai_agent.ui_helpers import build_finviz_chart_url, extract_summary_fields
 
 import streamlit as st
 
@@ -402,6 +403,7 @@ def fundamentals_agent(state: AgentState):
 def valuation_agent(state: AgentState):
     """Performs detailed valuation analysis using multiple methodologies."""
     data = state["data"]
+    show_reasoning = state["metadata"]["show_reasoning"]
 
     # Fetch the financial metrics
     metrics = get_financial_metrics(
@@ -479,7 +481,7 @@ def valuation_agent(state: AgentState):
         }
     )
 
-    result, _ = invoke_gemini(prompt, temperature=0.1, max_tokens=None, max_retries=6, stop=None)
+    result, model_used = invoke_gemini(prompt, temperature=0.1, max_tokens=None, max_retries=6, stop=None)
     try:
         estimation = parse_output_to_json(result.content)
     except json.JSONDecodeError as e:
@@ -564,6 +566,9 @@ def valuation_agent(state: AgentState):
 
     return {"messages": state["messages"] + [message],
             "data": data,
+            "metadata": {
+                "valuation_model_used": model_used,
+            },
             "agent_reasoning": {
             **state.get("agent_reasoning", {}),
             "valuation_agent": reasoning_output
@@ -846,7 +851,7 @@ def portfolio_management_agent(state: AgentState):
         }
     )
     # Invoke the LLM
-    result, _ = invoke_gemini(prompt, temperature=0.1, max_tokens=None, max_retries=6, stop=None)
+    result, model_used = invoke_gemini(prompt, temperature=0.1, max_tokens=None, max_retries=6, stop=None)
 
     # Create the portfolio management message
     message = HumanMessage(
@@ -858,7 +863,8 @@ def portfolio_management_agent(state: AgentState):
 
     return {"messages": state["messages"] + [message],
             "metadata": {
-                "logo_url": logo_url
+                "logo_url": logo_url,
+                "portfolio_model_used": model_used,
                 },
             "agent_reasoning": {
             **state.get("agent_reasoning", {}),
@@ -887,6 +893,17 @@ def show_agent_reasoning(output):
         return {"error": str(e), "original_output": str(output)}
 
 
+def classify_error(exc: Exception) -> str:
+    message = str(exc).lower()
+    if any(token in message for token in ["404", "not_found", "model", "gemini", "google"]):
+        return "llm"
+    if any(token in message for token in ["json", "parse", "decode"]):
+        return "parse"
+    if any(token in message for token in ["price", "ticker", "yfinance", "data"]):
+        return "data_fetch"
+    return "unknown"
+
+
 ##### Run the Hedge Fund #####
 def run_hedge_fund(ticker: str, start_date: str, end_date: str, portfolio: dict, show_reasoning: bool = False):
     final_state = app.invoke(
@@ -907,7 +924,13 @@ def run_hedge_fund(ticker: str, start_date: str, end_date: str, portfolio: dict,
             }
         },
     )
-    return final_state["messages"][-1].content, final_state["metadata"]["logo_url"], final_state["agent_reasoning"]
+    metadata = final_state.get("metadata", {})
+    agent_reasoning = final_state.get("agent_reasoning", {})
+    agent_reasoning["_meta"] = {
+        "valuation_model_used": metadata.get("valuation_model_used"),
+        "portfolio_model_used": metadata.get("portfolio_model_used"),
+    }
+    return final_state["messages"][-1].content, metadata.get("logo_url"), agent_reasoning
 
 # Define the new workflow
 workflow = StateGraph(AgentState)
@@ -1021,6 +1044,7 @@ if __name__ in {"__main__", "__page__"}:
         progress = st.progress(0, text="Starting analysis...")
 
         success_count = 0
+        warning_count = 0
         error_count = 0
 
         for idx, (ticker, weight) in enumerate(items, start=1):
@@ -1036,28 +1060,72 @@ if __name__ in {"__main__", "__page__"}:
                     show_reasoning=show_reasoning,
                 )
             except Exception as exc:
-                st.error(f"Error running agent for {ticker}: {exc}")
+                error_type = classify_error(exc)
+                st.error(f"[{error_type}] Error running agent for {ticker}: {exc}")
                 error_count += 1
                 continue
 
             parsed = parse_output_to_json(result)
+            summary = extract_summary_fields(parsed)
+            meta = agent_reasoning.get("_meta", {}) if isinstance(agent_reasoning, dict) else {}
             success_count += 1
             with st.expander(f"{ticker} analysis", expanded=True):
                 col1, col2 = st.columns([1, 9], gap="small", vertical_alignment="center")
                 with col1:
                     if logo_url:
-                        st.image(logo_url, width=90)
+                        try:
+                            st.image(logo_url, width=90)
+                        except Exception:
+                            warning_count += 1
+                            st.caption("Logo unavailable")
+                    else:
+                        warning_count += 1
+                        st.caption("Ticker without logo")
                 with col2:
                     st.markdown(f"**[{ticker}](https://finviz.com/quote.ashx?t={ticker}&p=d)**")
-                st.json(parsed)
+                    valuation_model = meta.get("valuation_model_used") or "unknown"
+                    portfolio_model = meta.get("portfolio_model_used") or "unknown"
+                    st.caption(
+                        f"Models used: valuation=`{valuation_model}` | portfolio_manager=`{portfolio_model}`"
+                    )
+
+                chart_url = build_finviz_chart_url(ticker)
+                try:
+                    st.image(chart_url, width="stretch")
+                except Exception:
+                    warning_count += 1
+                    st.caption(
+                        f"Chart unavailable. [Open Finviz](https://finviz.com/quote.ashx?t={ticker}&p=d)"
+                    )
+
+                tab_summary, tab_raw = st.tabs(["Executive Summary", "Raw JSON"])
+                with tab_summary:
+                    m1, m2, m3, m4, m5 = st.columns(5)
+                    m1.metric("Action", str(summary["action"]))
+                    m2.metric("Confidence", str(summary["confidence"]))
+                    m3.metric("Price", str(summary["price"]))
+                    m4.metric("Amount", str(summary["amount"]))
+                    m5.metric("Quantity", str(summary["quantity"]))
+                    st.markdown(f"**Reasoning:** {summary['reasoning']}")
+                    if summary.get("news"):
+                        st.markdown(f"**News context:** {summary['news']}")
+                    if summary["agent_signals"]:
+                        st.markdown("**Agent Signals**")
+                        st.dataframe(summary["agent_signals"], width="stretch", hide_index=True)
+                with tab_raw:
+                    st.json(parsed)
 
                 if show_reasoning:
                     st.markdown("#### Agent Reasonings")
                     for agent, reasoning in agent_reasoning.items():
+                        if agent == "_meta":
+                            continue
                         st.markdown(f"**{agent.replace('_', ' ').title()}**")
                         st.json(reasoning)
 
         progress.progress(100, text="Analysis completed.")
         st.success(f"Completed: {success_count} ticker(s) analyzed.")
+        if warning_count:
+            st.warning(f"{warning_count} render warning(s) detected (missing logo/chart).")
         if error_count:
             st.warning(f"{error_count} ticker(s) failed during execution.")
