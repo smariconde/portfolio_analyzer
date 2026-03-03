@@ -66,7 +66,19 @@ def invoke_gemini(
                 or "is not found" in message
                 or "supported for generatecontent" in message
             )
-            if model_not_found:
+            retryable_or_capacity_error = any(
+                token in message
+                for token in [
+                    "quota",
+                    "rate limit",
+                    "resource_exhausted",
+                    "429",
+                    "temporarily unavailable",
+                    "deadline exceeded",
+                    "unavailable",
+                ]
+            )
+            if model_not_found or retryable_or_capacity_error:
                 last_error = exc
                 continue
             raise

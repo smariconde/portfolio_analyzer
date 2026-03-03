@@ -7,7 +7,7 @@ from tavily import TavilyClient
 from typing import Dict
 
 from ai_agent.env_loader import load_project_env
-from ai_agent.ui_helpers import build_logo_url
+from ai_agent.ui_helpers import build_logo_candidates, build_logo_url
 
 load_project_env()
 
@@ -141,6 +141,7 @@ def get_financial_metrics(ticker):
     stock = yf.Ticker(ticker)
     info = stock.info  # Información financiera general
     logo_url = build_logo_url(info.get("website"))
+    logo_candidates = build_logo_candidates(info.get("website"))
     
     try:
         financial_metrics = {
@@ -151,19 +152,25 @@ def get_financial_metrics(ticker):
             "earnings_growth": info.get("earningsGrowth"),
             "current_ratio": info.get("currentRatio"),
             "debt_to_equity": info.get("debtToEquity") / 100 if info.get("debtToEquity") else None,
-            "free_cash_flow_per_share": info.get("freeCashflow") / info.get("sharesOutstanding") if (info.get("sharesOutstanding") and info.get("freeCashFlow")) else None,
+            "free_cash_flow_per_share": info.get("freeCashflow") / info.get("sharesOutstanding") if (info.get("sharesOutstanding") and info.get("freeCashflow")) else None,
             "earnings_per_share": info.get("trailingEps"),
             "price_to_earnings_ratio": info.get("trailingPE"),
             "price_to_book_ratio": info.get("priceToBook"),
             "price_to_sales_ratio": info.get("priceToSalesTrailing12Months"),
             "totalRevenue": info.get("totalRevenue"),
+            "totalDebt": info.get("totalDebt"),
+            "totalCash": info.get("totalCash"),
+            "beta": info.get("beta"),
+            "dividendRate": info.get("dividendRate"),
             "sharesOutstanding": info.get("sharesOutstanding"),
             "currentPrice": info.get("currentPrice"),
             "profitMargins": info.get("profitMargins"),
             "industry": info.get("industry"),
             "sector": info.get("sector"),
+            "country": info.get("country"),
             "targetMeanPrice": info.get("targetMeanPrice"),
             "logo_url": logo_url,
+            "logo_candidates": logo_candidates,
         }
     except KeyError as e:
         raise ValueError(f"Error fetching data for {ticker}: {e}")

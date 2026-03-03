@@ -59,6 +59,11 @@ pages_by_group = {
             icon=":material/calculate:",
         ),
         st.Page(
+            "pages/15_valuation_agent_v2.py",
+            title="Valuation Agent V2.0",
+            icon=":material/monitoring:",
+        ),
+        st.Page(
             "pages/04_sec_filings.py",
             title="SEC Filings",
             icon=":material/history_edu:",
@@ -102,6 +107,7 @@ fallback_links = {
     ],
     "Valuation": [
         ("pages/03_valuation_agent.py", "Valuation Agent", ":material/calculate:"),
+        ("pages/15_valuation_agent_v2.py", "Valuation Agent V2.0", ":material/monitoring:"),
         ("pages/04_sec_filings.py", "SEC Filings", ":material/history_edu:"),
     ],
     "Market Research": [

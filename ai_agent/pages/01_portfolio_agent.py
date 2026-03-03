@@ -1,6 +1,6 @@
 from typing import Annotated, Any, Dict, Sequence, TypedDict
 
-import operator, os, json, re, time, ast, math
+import operator, os, json, re, time, math
 import sys
 from pathlib import Path
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -17,6 +17,11 @@ for path in (ROOT, SRC):
 from ai_agent.tools import calculate_bollinger_bands, calculate_macd, calculate_obv, calculate_rsi, get_price_data, prices_to_df, get_financial_metrics, format_metric, get_news, calculate_trend_signals, calculate_mean_reversion_signals, calculate_momentum_signals, calculate_volatility_signals, calculate_stat_arb_signals, weighted_signal_combination, normalize_pandas, parse_output_to_json
 from ai_agent.llm_utils import invoke_gemini
 from ai_agent.ui_helpers import build_finviz_chart_url, extract_summary_fields
+from ai_agent.valuation_v2.assistant import (
+    deterministic_method_fallback,
+    propose_method_and_assumptions_with_llm,
+)
+from ai_agent.valuation_v2.engine import run_valuation
 
 import streamlit as st
 
@@ -404,11 +409,88 @@ def valuation_agent(state: AgentState):
     """Performs detailed valuation analysis using multiple methodologies."""
     data = state["data"]
     show_reasoning = state["metadata"]["show_reasoning"]
+    valuation_config = state["metadata"].get("valuation_config", {})
+    valuation_engine = valuation_config.get("engine", "v1")
 
     # Fetch the financial metrics
     metrics = get_financial_metrics(
         ticker=data["ticker"]
     )
+
+    if valuation_engine == "v2":
+        country = (metrics.get("country") or "US").upper().strip()
+        selection = deterministic_method_fallback(
+            ticker=data["ticker"],
+            metrics=metrics,
+            country=country,
+            asset_type="",
+        )
+        if os.environ.get("GOOGLE_API_KEY"):
+            try:
+                selection = propose_method_and_assumptions_with_llm(
+                    ticker=data["ticker"],
+                    metrics=metrics,
+                    country=country,
+                )
+            except Exception:
+                selection = deterministic_method_fallback(
+                    ticker=data["ticker"],
+                    metrics=metrics,
+                    country=country,
+                    asset_type="",
+                )
+
+        payload = run_valuation(
+            ticker=data["ticker"],
+            metrics=metrics,
+            asset_type=selection.get("asset_type", "stable-cashflow"),
+            country=country,
+            margin_of_safety_pct=0.25,
+            llm_assumptions=selection.get("assumptions", {}),
+            method_override=selection.get("valuation_method"),
+            method_selection_reason=selection.get("valuation_method_reason"),
+            method_selected_by=selection.get("selected_by", "deterministic_fallback"),
+            method_selection_trace=selection.get("method_selection_trace", []),
+            assumption_source="online",
+            strict_mode=True,
+            strict_mode_policy="autocorrect",
+            monte_carlo_trials=500,
+        )
+        upside = payload["result"]["upside_downside_pct"] / 100.0
+        signal = "bullish" if upside > 0.15 else "bearish" if upside < -0.15 else "neutral"
+        message_content = {
+            "signal": signal,
+            "confidence": f"{min(abs(upside), 1.0):.0%}",
+            "reasoning": {
+                "details": payload,
+            },
+        }
+        message = HumanMessage(
+            content=json.dumps(message_content),
+            name="valuation_agent",
+        )
+        reasoning_output = show_agent_reasoning(message.content) if show_reasoning else None
+        return {
+            "messages": state["messages"] + [message],
+            "data": data,
+            "metadata": {
+                "valuation_model_used": (
+                    f"valuation_v2_{payload.get('valuation_method', 'unknown')}"
+                    f"_{payload.get('method_selection', {}).get('selected_by', 'unknown')}"
+                ),
+                "valuation_snapshot": {
+                    "valuation_method": payload.get("valuation_method"),
+                    "intrinsic_value_per_share": payload.get("result", {}).get("intrinsic_value_per_share"),
+                    "current_price": payload.get("result", {}).get("current_price"),
+                    "upside_downside_pct": payload.get("result", {}).get("upside_downside_pct"),
+                    "margin_of_safety_price": payload.get("result", {}).get("margin_of_safety_price"),
+                },
+            },
+            "agent_reasoning": {
+                **state.get("agent_reasoning", {}),
+                "valuation_agent": reasoning_output
+            },
+        }
 
     # 1. Get necessary data from metrics
     ltm_revenue = metrics.get("totalRevenue") or 0
@@ -448,7 +530,7 @@ def valuation_agent(state: AgentState):
             (
                 "human",
                 f"""Based on the company below, provide the data for the valuation model. Make your best estimate and assumptions.
-                    Company: {ticker}
+                    Company: {data["ticker"]}
                     Industry: {industry}
                     Sector: {sector}
     
@@ -468,7 +550,7 @@ def valuation_agent(state: AgentState):
 
     prompt = template.invoke(
         {
-            "ticker": ticker,
+            "ticker": data["ticker"],
             "industry": industry,
             "sector": sector,
             "ltm_revenue": ltm_revenue,
@@ -481,11 +563,27 @@ def valuation_agent(state: AgentState):
         }
     )
 
-    result, model_used = invoke_gemini(prompt, temperature=0.1, max_tokens=None, max_retries=6, stop=None)
     try:
-        estimation = parse_output_to_json(result.content)
+        result, model_used = invoke_gemini(prompt, temperature=0.1, max_tokens=None, max_retries=6, stop=None)
+        result_content = result.content
+    except Exception as exc:
+        model_used = "deterministic_fallback"
+        result_content = json.dumps(
+            {
+                "error": f"llm_unavailable: {exc}",
+                "revenue_cagr": 0.05,
+                f"profit_margin_{target_year}": 0.15,
+                "shares_reduction_per_year": 0.01,
+                "discount_rate": 0.1,
+                "terminal_growth_rate": 0.03,
+                "valuation_method": "PE_multiple",
+                f"pe_ratio_{target_year}": 15,
+            }
+        )
+    try:
+        estimation = parse_output_to_json(result_content)
     except json.JSONDecodeError as e:
-        estimation = {"error": f"JSON Decode Error {e}", "result": result.content}
+        estimation = {"error": f"JSON Decode Error {e}", "result": result_content}
 
     revenue_cagr = estimation.get("revenue_cagr", 0.05)
     profit_margin_target_year = estimation.get(f"profit_margin_{target_year}", 0.15)
@@ -534,9 +632,9 @@ def valuation_agent(state: AgentState):
     # Calculate intrinsic value per share considering reduction of shares
     shares_value = shares_outstanding * ((1 - shares_reduction_per_year) ** 5)
 
-    intrinsic_value_per_share = intrinsic_value / shares_value
+    intrinsic_value_per_share = intrinsic_value / shares_value if shares_value else 0.0
 
-    gap = min(((intrinsic_value_per_share - current_price) / current_price), 1.0)
+    gap = min(((intrinsic_value_per_share - current_price) / current_price), 1.0) if current_price else 0.0
     signal = "bullish" if gap > 0.15 else "bearish" if gap < -0.15 else "neutral"
 
     reasoning = {       
@@ -568,6 +666,15 @@ def valuation_agent(state: AgentState):
             "data": data,
             "metadata": {
                 "valuation_model_used": model_used,
+                "valuation_snapshot": {
+                    "valuation_method": valuation_method,
+                    "intrinsic_value_per_share": round(intrinsic_value_per_share, 2),
+                    "current_price": current_price,
+                    "upside_downside_pct": (
+                        ((intrinsic_value_per_share / current_price) - 1.0) * 100.0 if current_price else 0.0
+                    ),
+                    "margin_of_safety_price": round(intrinsic_value_per_share * (1.0 - 0.25), 2),
+                },
             },
             "agent_reasoning": {
             **state.get("agent_reasoning", {}),
@@ -590,15 +697,19 @@ def risk_management_agent(state: AgentState):
     fundamentals_message = next(msg for msg in state["messages"] if msg.name == "fundamentals_agent")
     valuation_message = next(msg for msg in state["messages"] if msg.name == "valuation_agent")
 
-    try:
-        fundamental_signals = json.loads(fundamentals_message.content)
-        technical_signals = json.loads(quant_message.content)
-        valuation_signals = json.loads(valuation_message.content)
+    def _coerce_agent_payload(raw_content: str) -> dict:
+        parsed = parse_output_to_json(raw_content)
+        if not isinstance(parsed, dict):
+            parsed = {}
+        if "signal" not in parsed:
+            parsed["signal"] = "neutral"
+        if "confidence" not in parsed:
+            parsed["confidence"] = "50%"
+        return parsed
 
-    except Exception as e:
-        fundamental_signals = ast.literal_eval(fundamentals_message.content)
-        technical_signals = ast.literal_eval(quant_message.content)
-        valuation_signals = ast.literal_eval(valuation_message.content)
+    fundamental_signals = _coerce_agent_payload(fundamentals_message.content)
+    technical_signals = _coerce_agent_payload(quant_message.content)
+    valuation_signals = _coerce_agent_payload(valuation_message.content)
         
     agent_signals = {
         "fundamental": fundamental_signals,
@@ -765,6 +876,79 @@ def risk_management_agent(state: AgentState):
 
 
 ##### Portfolio Management Agent #####
+def _build_portfolio_decision_fallback(
+    *,
+    quant_message: HumanMessage,
+    fundamentals_message: HumanMessage,
+    valuation_message: HumanMessage,
+    risk_message: HumanMessage,
+    portfolio: dict,
+    market_news: dict,
+) -> str:
+    quant = parse_output_to_json(quant_message.content)
+    fundamentals = parse_output_to_json(fundamentals_message.content)
+    valuation = parse_output_to_json(valuation_message.content)
+    risk = parse_output_to_json(risk_message.content)
+
+    def _signal_value(payload: dict) -> int:
+        signal = str(payload.get("signal", "neutral")).lower()
+        if signal == "bullish":
+            return 1
+        if signal == "bearish":
+            return -1
+        return 0
+
+    score = _signal_value(quant) + _signal_value(fundamentals) + _signal_value(valuation)
+    risk_action = str(risk.get("trading_action", "hold")).lower()
+    price = float(quant.get("current_price", 0.0) or 0.0)
+    max_position_size = float(risk.get("max_position_size", 0.0) or 0.0)
+    cash = float(portfolio.get("cash", 0.0) or 0.0)
+    stock_weight = float(portfolio.get("stock", 0.0) or 0.0)
+
+    action = "hold"
+    if risk_action == "reduce":
+        action = "sell" if stock_weight > 0 else "hold"
+    elif risk_action == "hold":
+        action = "hold"
+    else:
+        if score > 0 and cash > 0:
+            action = "buy"
+        elif score < 0 and stock_weight > 0:
+            action = "sell"
+
+    amount = 0.0
+    quantity = 0.0
+    if action == "buy" and price > 0:
+        amount = min(max_position_size, cash * 0.2)
+        quantity = amount / price if price else 0.0
+    elif action == "sell" and price > 0:
+        # No exact share count is tracked in this app; emit conservative placeholder.
+        amount = 0.0
+        quantity = 0.0
+
+    confidence_pct = int(max(35, min(90, 50 + (score * 10))))
+    agent_signals = [
+        {"agent": "technical", "signal": quant.get("signal", "neutral"), "confidence": quant.get("confidence", "N/A")},
+        {"agent": "fundamental", "signal": fundamentals.get("signal", "neutral"), "confidence": fundamentals.get("confidence", "N/A")},
+        {"agent": "valuation", "signal": valuation.get("signal", "neutral"), "confidence": valuation.get("confidence", "N/A")},
+    ]
+
+    fallback_payload = {
+        "price": round(price, 2),
+        "action": action,
+        "confidence": f"{confidence_pct}%",
+        "amount": round(amount, 2),
+        "quantity": round(quantity, 4),
+        "agent_signals": agent_signals,
+        "reasoning": (
+            "Fallback deterministico activado por falla/capacidad del modelo. "
+            f"Score agregado={score}, risk_action={risk_action}, max_position_size={max_position_size:.2f}."
+        ),
+        "news": market_news.get("answer", ""),
+    }
+    return json.dumps(fallback_payload)
+
+
 def portfolio_management_agent(state: AgentState):
     """Makes final trading decisions and generates orders"""
     show_reasoning = state["metadata"]["show_reasoning"]
@@ -850,12 +1034,24 @@ def portfolio_management_agent(state: AgentState):
             "links": market_news["results"]
         }
     )
-    # Invoke the LLM
-    result, model_used = invoke_gemini(prompt, temperature=0.1, max_tokens=None, max_retries=6, stop=None)
+    # Invoke the LLM with deterministic fallback when model quota/capacity fails.
+    try:
+        result, model_used = invoke_gemini(prompt, temperature=0.1, max_tokens=None, max_retries=6, stop=None)
+        message_content = result.content
+    except Exception:
+        model_used = "deterministic_fallback"
+        message_content = _build_portfolio_decision_fallback(
+            quant_message=quant_message,
+            fundamentals_message=fundamentals_message,
+            valuation_message=valuation_message,
+            risk_message=risk_message,
+            portfolio=portfolio,
+            market_news=market_news,
+        )
 
     # Create the portfolio management message
     message = HumanMessage(
-        content=result.content,
+        content=message_content,
         name="portfolio_management",
     )
 
@@ -905,7 +1101,14 @@ def classify_error(exc: Exception) -> str:
 
 
 ##### Run the Hedge Fund #####
-def run_hedge_fund(ticker: str, start_date: str, end_date: str, portfolio: dict, show_reasoning: bool = False):
+def run_hedge_fund(
+    ticker: str,
+    start_date: str,
+    end_date: str,
+    portfolio: dict,
+    show_reasoning: bool = False,
+    valuation_config: dict | None = None,
+):
     final_state = app.invoke(
         {
             "messages": [
@@ -921,6 +1124,7 @@ def run_hedge_fund(ticker: str, start_date: str, end_date: str, portfolio: dict,
             },
             "metadata": {
                 "show_reasoning": show_reasoning,
+                "valuation_config": valuation_config or {"engine": "v1"},
             }
         },
     )
@@ -929,6 +1133,7 @@ def run_hedge_fund(ticker: str, start_date: str, end_date: str, portfolio: dict,
     agent_reasoning["_meta"] = {
         "valuation_model_used": metadata.get("valuation_model_used"),
         "portfolio_model_used": metadata.get("portfolio_model_used"),
+        "valuation_snapshot": metadata.get("valuation_snapshot"),
     }
     return final_state["messages"][-1].content, metadata.get("logo_url"), agent_reasoning
 
@@ -965,7 +1170,9 @@ if __name__ in {"__main__", "__page__"}:
         st.session_state.portfolio = {}
 
     if not os.environ.get("GOOGLE_API_KEY"):
-        st.warning("`GOOGLE_API_KEY` is missing. Analysis will fail until it is configured.")
+        st.warning(
+            "`GOOGLE_API_KEY` is missing. LLM steps will use deterministic fallback where available."
+        )
 
     with st.form("portfolio_builder", clear_on_submit=True):
         left, middle, right = st.columns([4, 4, 2], gap="large", vertical_alignment="bottom")
@@ -1020,6 +1227,17 @@ if __name__ in {"__main__", "__page__"}:
             )
         with right:
             show_reasoning = st.checkbox("Show reasoning from each agent", value=False)
+        v1_col, v2_col = st.columns(2)
+        with v1_col:
+            valuation_engine = st.selectbox(
+                "Valuation Engine",
+                options=["v1", "v2"],
+                index=0,
+                help="v1: legacy AI-assisted DCF. v2: automatic method selection + deterministic valuation.",
+            )
+        with v2_col:
+            if valuation_engine == "v2":
+                st.caption("V2 defaults: auto method selection, country inferred, 25% MoS, strict checks on.")
         col_start, col_end = st.columns(2)
         with col_start:
             start_date = st.date_input("Start Date", value=datetime.now() - timedelta(days=365))
@@ -1030,8 +1248,7 @@ if __name__ in {"__main__", "__page__"}:
         st.error("Start date must be earlier than end date.")
 
     run_disabled = (
-        not os.environ.get("GOOGLE_API_KEY")
-        or not st.session_state.portfolio
+        not st.session_state.portfolio
         or total_percentage <= 0
         or total_percentage > 100
         or start_date > end_date
@@ -1040,6 +1257,9 @@ if __name__ in {"__main__", "__page__"}:
     if st.button("Run Agents Analysis", type="primary", disabled=run_disabled):
         start_date_str = start_date.strftime("%Y-%m-%d")
         end_date_str = end_date.strftime("%Y-%m-%d")
+        valuation_config = {
+            "engine": valuation_engine,
+        }
         items = list(st.session_state.portfolio.items())
         progress = st.progress(0, text="Starting analysis...")
 
@@ -1058,6 +1278,7 @@ if __name__ in {"__main__", "__page__"}:
                     end_date=end_date_str,
                     portfolio=details,
                     show_reasoning=show_reasoning,
+                    valuation_config=valuation_config,
                 )
             except Exception as exc:
                 error_type = classify_error(exc)
@@ -1106,6 +1327,35 @@ if __name__ in {"__main__", "__page__"}:
                     m3.metric("Price", str(summary["price"]))
                     m4.metric("Amount", str(summary["amount"]))
                     m5.metric("Quantity", str(summary["quantity"]))
+
+                    valuation_snapshot = meta.get("valuation_snapshot") if isinstance(meta, dict) else None
+                    if isinstance(valuation_snapshot, dict):
+                        intrinsic = valuation_snapshot.get("intrinsic_value_per_share")
+                        current_px = valuation_snapshot.get("current_price")
+                        upside = valuation_snapshot.get("upside_downside_pct")
+                        mos_price = valuation_snapshot.get("margin_of_safety_price")
+                        method = valuation_snapshot.get("valuation_method")
+
+                        v1, v2, v3, v4 = st.columns(4)
+                        v1.metric(
+                            "Intrinsic Value",
+                            f"${float(intrinsic):.2f}" if isinstance(intrinsic, (int, float)) else "N/A",
+                        )
+                        v2.metric(
+                            "Current Price (Valuation)",
+                            f"${float(current_px):.2f}" if isinstance(current_px, (int, float)) else "N/A",
+                        )
+                        v3.metric(
+                            "Upside/Downside",
+                            f"{float(upside):.2f}%" if isinstance(upside, (int, float)) else "N/A",
+                        )
+                        v4.metric(
+                            "MoS Price",
+                            f"${float(mos_price):.2f}" if isinstance(mos_price, (int, float)) else "N/A",
+                        )
+                        if method:
+                            st.caption(f"Valuation method used: `{method}`")
+
                     st.markdown(f"**Reasoning:** {summary['reasoning']}")
                     if summary.get("news"):
                         st.markdown(f"**News context:** {summary['news']}")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import requests
 from urllib.parse import quote_plus, urlparse
 
 
@@ -15,7 +16,7 @@ def build_finviz_chart_url(ticker: str) -> str:
     )
 
 
-def build_logo_url(website: str | None) -> str | None:
+def _extract_domain(website: str | None) -> str | None:
     if not website:
         return None
     raw = website.strip()
@@ -32,7 +33,36 @@ def build_logo_url(website: str | None) -> str | None:
     if not domain or "." not in domain:
         return None
 
-    return f"https://logo.clearbit.com/{domain}"
+    return domain
+
+
+def build_logo_candidates(website: str | None) -> list[str]:
+    domain = _extract_domain(website)
+    if not domain:
+        return []
+    return [
+        f"https://logo.clearbit.com/{domain}",
+        f"https://icons.duckduckgo.com/ip3/{domain}.ico",
+        f"https://www.google.com/s2/favicons?domain={domain}&sz=128",
+    ]
+
+
+def resolve_logo_url(website: str | None, timeout: int = 4) -> str | None:
+    candidates = build_logo_candidates(website)
+    for url in candidates:
+        try:
+            response = requests.get(url, timeout=timeout)
+            content_type = (response.headers.get("content-type") or "").lower()
+            if response.status_code == 200 and "image" in content_type:
+                return url
+        except Exception:
+            continue
+    return candidates[0] if candidates else None
+
+
+def build_logo_url(website: str | None) -> str | None:
+    # Backward-compatible alias for older imports.
+    return resolve_logo_url(website)
 
 
 def extract_summary_fields(parsed_decision: dict) -> dict:
