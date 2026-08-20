@@ -13,7 +13,10 @@ for path in (ROOT, SRC):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-from portfolio_analyzer.data.commodities import fetch_soybean_spread, generate_soybean_report_pdf
+from portfolio_analyzer.data.commodities import (  # noqa: E402
+    fetch_soybean_spread,
+    generate_soybean_report_pdf,
+)
 
 
 @st.cache_data(ttl=3600)
@@ -21,10 +24,11 @@ def load_spread(start_date_iso: str):
     return fetch_soybean_spread(start_date=start_date_iso)
 
 
-st.title("Commodities Spread: Soybean")
-st.caption("Daily Chicago vs Rosario soybean spread in USD/ton.")
+st.title("Soja Argentina: valor relativo")
+st.caption("Pizarra Rosario disponible valuada al dólar BNA divisas comprador, frente a Chicago.")
 st.info(
-    "Track relative soybean pricing between Chicago and Rosario in USD to monitor dislocations.",
+    "La señal usa la posición de la brecha actual dentro de su propia historia: "
+    "cuanto menor el descuento, más firme está Rosario frente a Chicago.",
     icon=":material/info:",
 )
 if st.button("Refresh cached data", icon=":material/refresh:"):
@@ -47,18 +51,25 @@ if submit:
             st.error(f"Commodities analysis failed: {exc}")
             st.stop()
 
-    st.success("Analysis completed")
+    st.success("Análisis actualizado")
     latest_row = result.dataframe.iloc[-1]
     col1, col2, col3 = st.columns(3)
-    col1.metric("Correlation", f"{result.correlation:.4f}")
-    col2.metric("Latest Spread %", f"{result.spread_pct_latest:.2f}%")
-    col3.metric("Mean Spread %", f"{result.spread_pct_mean:.2f}%")
+    col1.metric("Descuento actual", f"{result.spread_pct_latest:.2f}%")
+    col2.metric("Posición histórica", f"P{result.spread_percentile:.0f}")
+    col3.metric("Lectura", result.decision)
     c1, c2 = st.columns(2)
     c1.metric("Chicago latest (USD/ton)", f"{float(latest_row['Chicago_USD_ton']):,.2f}")
     c2.metric("Rosario latest (USD/ton)", f"{float(latest_row['Rosario_USD_ton']):,.2f}")
 
+    st.caption(
+        f"Última rueda comparable: {result.dataframe.index[-1]:%Y-%m-%d}. "
+        "P25 indica Rosario relativamente caro; P75, Rosario relativamente barato."
+    )
+
     if result.outlier_dates:
-        corrected_dates = ", ".join(date_value.strftime("%Y-%m-%d") for date_value in result.outlier_dates)
+        corrected_dates = ", ".join(
+            date_value.strftime("%Y-%m-%d") for date_value in result.outlier_dates
+        )
         st.warning(
             f"Excluded and interpolated isolated source outlier(s) for Rosario: {corrected_dates}.",
             icon=":material/info:",
@@ -73,7 +84,8 @@ if submit:
         type="primary",
     )
     st.caption(
-        "The downloadable PDF restores the detailed analytical charts: price spread, EMA 20, historic mean, decision zones and events."
+        "El PDF incluye precios, descuento histórico, EMA 20 y zonas definidas por "
+        "percentiles históricos."
     )
     st.dataframe(result.dataframe.tail(rows), width="stretch")
 

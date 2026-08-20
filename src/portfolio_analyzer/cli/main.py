@@ -95,9 +95,9 @@ def main() -> int:
         print(
             json.dumps(
                 {
-                    "correlation": result.correlation,
                     "spread_pct_latest": result.spread_pct_latest,
-                    "spread_pct_mean": result.spread_pct_mean,
+                    "spread_percentile": result.spread_percentile,
+                    "decision": result.decision,
                     "prices_chart": str(Path(args.prices_chart)),
                     "spread_chart": str(Path(args.spread_chart)),
                 },
