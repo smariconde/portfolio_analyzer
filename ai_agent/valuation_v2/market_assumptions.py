@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from functools import lru_cache
 from io import StringIO
 import os
@@ -9,6 +9,11 @@ from typing import Any
 
 import pandas as pd
 import requests
+
+
+# ``datetime.UTC`` was introduced in Python 3.11. Keep compatibility with the
+# project's supported Python 3.10 baseline.
+UTC = timezone.utc
 
 
 LOCAL_AS_OF_DATE = date(2026, 1, 1)

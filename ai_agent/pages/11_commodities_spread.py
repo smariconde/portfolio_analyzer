@@ -13,7 +13,7 @@ for path in (ROOT, SRC):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-from portfolio_analyzer.data.commodities import fetch_soybean_spread
+from portfolio_analyzer.data.commodities import fetch_soybean_spread, generate_soybean_report_pdf
 
 
 @st.cache_data(ttl=3600)
@@ -57,10 +57,24 @@ if submit:
     c1.metric("Chicago latest (USD/ton)", f"{float(latest_row['Chicago_USD_ton']):,.2f}")
     c2.metric("Rosario latest (USD/ton)", f"{float(latest_row['Rosario_USD_ton']):,.2f}")
 
-    st.subheader("Price series")
-    st.line_chart(result.dataframe[["Chicago_USD_ton", "Rosario_USD_ton"]])
-    st.subheader("Spread %")
-    st.line_chart(result.dataframe[["Spread_Pct"]])
+    if result.outlier_dates:
+        corrected_dates = ", ".join(date_value.strftime("%Y-%m-%d") for date_value in result.outlier_dates)
+        st.warning(
+            f"Excluded and interpolated isolated source outlier(s) for Rosario: {corrected_dates}.",
+            icon=":material/info:",
+        )
+
+    report_pdf = generate_soybean_report_pdf(result, start_date.strftime("%Y-%m-%d"))
+    st.download_button(
+        "Download detailed soybean report (PDF)",
+        data=report_pdf,
+        file_name=f"soybean_report_{result.dataframe.index[-1]:%Y%m%d}.pdf",
+        mime="application/pdf",
+        type="primary",
+    )
+    st.caption(
+        "The downloadable PDF restores the detailed analytical charts: price spread, EMA 20, historic mean, decision zones and events."
+    )
     st.dataframe(result.dataframe.tail(rows), width="stretch")
 
     csv_data = result.dataframe.to_csv(index=True).encode("utf-8")

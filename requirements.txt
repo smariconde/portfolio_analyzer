@@ -1,17 +1,3 @@
-streamlit
-langchain
-langgraph
-langchain-google-genai
-requests
-pandas
-yfinance
-yahooquery
-tavily-python
-numpy
-matplotlib
-beautifulsoup4
-Pillow
-fpdf
-deap
-PyPortfolioOpt
-xlrd>=2.0.1
+# Runtime dependencies are defined in pyproject.toml. Installing the project
+# editable makes both the CLI and the Streamlit app importable from this checkout.
+-e .

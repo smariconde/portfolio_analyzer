@@ -20,6 +20,7 @@ dependencies = [
   "tavily-python",
   "numpy",
   "matplotlib",
+  "lxml",
   "beautifulsoup4",
   "Pillow",
   "fpdf",

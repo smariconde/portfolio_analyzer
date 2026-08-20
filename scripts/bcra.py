@@ -3,11 +3,10 @@ import requests  # Para realizar solicitudes HTTP a la API
 import matplotlib.pyplot as plt  # Para crear gráficos
 import matplotlib.dates as mdates  # Para formatear fechas en los gráficos
 from datetime import datetime  # Para trabajar con objetos de fecha y hora
-import warnings # Para manejar advertencias de InsecureRequestWarning
 
 # --- Configuración General ---
 # URL base de la API de estadísticas monetarias del BCRA
-BASE_URL_BCRA = "https://api.bcra.gob.ar/estadisticas/v3.0/monetarias"
+BASE_URL_BCRA = "https://api.bcra.gob.ar/estadisticas/v4.0/monetarias"
 
 # Diccionario de variables predefinidas para facilitar la selección al usuario.
 # Este diccionario se basa en el JSON que proporcionaste.
@@ -257,16 +256,11 @@ def fetch_bcra_data(variable_id, fecha_desde=None, fecha_hasta=None, limit=1000)
     
     params['limit'] = min(limit, 3000)
 
-    headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36",
-               'referer':'https://www.google.com/'}
+    headers = {"user-agent": "portfolio-analyzer/0.1"}
 
     
-    ssl_verify = False # Por defecto, la verificación SSL está activada (True)
-    # ssl_verify = False # DESCOMENTA ESTA LÍNEA PARA DESHABILITAR LA VERIFICACIÓN SSL (MENOS SEGURO)
-
-    if not ssl_verify:
-        # Suprimir solo las advertencias de solicitud insegura si se deshabilita la verificación SSL
-        warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+    # Keep TLS verification enabled. The BCRA endpoint provides a valid HTTPS certificate.
+    ssl_verify = True
 
 
     print(f"\nRealizando consulta a la API del BCRA:")
@@ -285,13 +279,15 @@ def fetch_bcra_data(variable_id, fecha_desde=None, fecha_hasta=None, limit=1000)
 
         if data.get('status') == 200:
             resultados_procesados = []
-            for item in data.get('results', []):
-                try:
-                    fecha_obj = datetime.strptime(item['fecha'], '%Y-%m-%d').date()
-                    valor_float = float(item['valor'])
-                    resultados_procesados.append({'fecha': fecha_obj, 'valor': valor_float})
-                except (ValueError, TypeError) as e:
-                    print(f"Advertencia: No se pudo procesar el registro: {item}. Error: {e}")
+            # Since v4, observations are nested under ``results[].detalle``.
+            for result in data.get('results', []):
+                for item in result.get('detalle', []):
+                    try:
+                        fecha_obj = datetime.strptime(item['fecha'], '%Y-%m-%d').date()
+                        valor_float = float(item['valor'])
+                        resultados_procesados.append({'fecha': fecha_obj, 'valor': valor_float})
+                    except (KeyError, ValueError, TypeError) as e:
+                        print(f"Advertencia: No se pudo procesar el registro: {item}. Error: {e}")
             
             resultados_procesados.sort(key=lambda x: x['fecha'])
             return resultados_procesados
@@ -305,8 +301,7 @@ def fetch_bcra_data(variable_id, fecha_desde=None, fecha_hasta=None, limit=1000)
         print(f"Error de SSL al contactar la API: {ssl_err}")
         print("Esto puede deberse a certificados desactualizados en tu sistema.")
         print("Intenta actualizar 'certifi': pip install --upgrade certifi")
-        print("Si eso no funciona, como último recurso (y entendiendo los riesgos de seguridad),")
-        print("puedes desactivar la verificación SSL en el script descomentando la línea 'ssl_verify = False'.")
+        print("Si persiste, revisa los certificados del sistema o la configuración de red.")
     except requests.exceptions.HTTPError as http_err:
         print(f"Error HTTP al contactar la API: {http_err}")
         if response is not None:

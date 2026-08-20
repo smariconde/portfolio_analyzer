@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Iterable
 import sys
 from io import StringIO
-import warnings
 
 import pandas as pd
 import requests
@@ -150,13 +149,6 @@ def _get_bcra_v4_series(variable_id: int, limit: int = 6000) -> pd.Series:
     try:
         response = requests.get(url, params=params, timeout=30, headers=headers)
         response.raise_for_status()
-    except requests.exceptions.SSLError:
-        try:
-            warnings.filterwarnings("ignore", message="Unverified HTTPS request")
-            response = requests.get(url, params=params, timeout=30, headers=headers, verify=False)
-            response.raise_for_status()
-        except requests.exceptions.RequestException:
-            return pd.Series(dtype=float)
     except requests.exceptions.RequestException:
         return pd.Series(dtype=float)
     payload = response.json()
