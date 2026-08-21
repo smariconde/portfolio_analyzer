@@ -9,6 +9,8 @@ This repository is a Python-based finance toolkit with three main areas:
   - `core/` shared settings and logging
 - `ai_agent/` for the Streamlit multi-page app and agent workflows (`Home.py`, `pages/`, `tools.py`, `valuation_v2/`, `backtester.py`).
 - `scripts/` for script-style workflows (for example `sortino.py`, `bcra.py`, `indec_balanza_comercial.py`, `optimal_portfolio.py`) and `scripts/legacy/` archives.
+- `.agents/skills/` for repository-scoped Codex skills. Keep these skills versioned; the
+  Damodaran valuation skill applies to valuation-agent and intrinsic-value work.
 
 Generated artifacts (charts, CSV, PDF) are typically written to `outputs/`, `charts/`, or repository root, with cached market data in `cache/`.
 

@@ -10,6 +10,16 @@ if str(ROOT) not in sys.path:
 from ai_agent.ui_helpers import build_finviz_chart_url, build_logo_url, extract_summary_fields
 
 
+class _FakeResponse:
+    def __init__(self, status_code: int, content_type: str = "") -> None:
+        self.status_code = status_code
+        self.headers = {"content-type": content_type}
+
+
+def _unavailable_logo(*args, **kwargs) -> _FakeResponse:
+    return _FakeResponse(status_code=404)
+
+
 def test_build_finviz_chart_url_normalizes_ticker() -> None:
     url = build_finviz_chart_url(" aapl ")
     assert "t=AAPL" in url
@@ -21,12 +31,25 @@ def test_build_finviz_chart_url_encodes_special_chars() -> None:
     assert "t=BRK.B" in url
 
 
-def test_build_logo_url_from_https() -> None:
+def test_build_logo_url_from_https(monkeypatch) -> None:
+    monkeypatch.setattr("ai_agent.ui_helpers.requests.get", _unavailable_logo)
     assert build_logo_url("https://www.microsoft.com/en-us") == "https://logo.clearbit.com/microsoft.com"
 
 
-def test_build_logo_url_from_plain_domain() -> None:
+def test_build_logo_url_from_plain_domain(monkeypatch) -> None:
+    monkeypatch.setattr("ai_agent.ui_helpers.requests.get", _unavailable_logo)
     assert build_logo_url("apple.com") == "https://logo.clearbit.com/apple.com"
+
+
+def test_build_logo_url_uses_first_available_provider(monkeypatch) -> None:
+    def fake_get(url: str, timeout: int) -> _FakeResponse:
+        if "duckduckgo.com" in url:
+            return _FakeResponse(status_code=200, content_type="image/png")
+        return _FakeResponse(status_code=404)
+
+    monkeypatch.setattr("ai_agent.ui_helpers.requests.get", fake_get)
+
+    assert build_logo_url("apple.com") == "https://icons.duckduckgo.com/ip3/apple.com.ico"
 
 
 def test_build_logo_url_invalid_values() -> None:

@@ -119,10 +119,14 @@ def calculate_bollinger_bands(prices_df, window=20):
 def calculate_obv(prices_df):
     obv = [0]
     for i in range(1, len(prices_df)):
-        if np.where(prices_df['close'].iloc[i] > prices_df['close'].iloc[i - 1]):
-            obv.append(obv[-1] + prices_df['volume'].iloc[i])
-        elif np.where(prices_df['close'].iloc[i] < prices_df['close'].iloc[i - 1]):
-            obv.append(obv[-1] - prices_df['volume'].iloc[i])
+        current_close = prices_df['close'].iloc[i]
+        previous_close = prices_df['close'].iloc[i - 1]
+        current_volume = prices_df['volume'].iloc[i]
+
+        if current_close > previous_close:
+            obv.append(obv[-1] + current_volume)
+        elif current_close < previous_close:
+            obv.append(obv[-1] - current_volume)
         else:
             obv.append(obv[-1])
     prices_df['OBV'] = obv
